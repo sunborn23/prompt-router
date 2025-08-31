@@ -86,3 +86,6 @@ Windows PowerShell:
 - In OpenWebUI mode, Bedrock is called via the integrated `generate_chat_completion`.  
 - In CLI mode, Bedrock is accessed directly via `boto3`.
 
+## License
+
+see LICENSE file

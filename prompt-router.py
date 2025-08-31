@@ -64,6 +64,15 @@ def build_preface(category: str, model_id: str) -> str:
     return f"_(detected {category} prompt, routing to {model_id})_\n\n---\n\n"
 
 
+def build_fallback_preface(model_id: str) -> str:
+    """Return the markdown preface for routing fallback information."""
+
+    return (
+        "_(Routing error. If this happens repeatedly, please report it. "
+        f"Falling back to {model_id}.)_\n\n---\n\n"
+    )
+
+
 def choose_category_or_default(raw_label: str, categories: Dict[str, Any]) -> str:
     """Normalize the classifier label or fall back to ``default``."""
 
@@ -229,6 +238,7 @@ if OPENWEBUI:
             logger.info("Routing category '%s' to model '%s'", category, model_id)
 
             body["model"] = model_id
+            routing_error = False
             try:
                 response = await generate_chat_completion(__request__, body, user)
             except Exception as exc:
@@ -238,6 +248,7 @@ if OPENWEBUI:
                     exc,
                 )
                 if model_id != self.valves.MODEL_DEFAULT:
+                    routing_error = True
                     body["model"] = self.valves.MODEL_DEFAULT
                     model_id = self.valves.MODEL_DEFAULT
                     try:
@@ -254,10 +265,13 @@ if OPENWEBUI:
                 else:
                     return {"error": "Model request failed."}
 
-            if not self.valves.PREFACE_ENABLED:
+            preface = ""
+            if self.valves.PREFACE_ENABLED:
+                preface += build_preface(category, model_id)
+            if routing_error:
+                preface += build_fallback_preface(model_id)
+            if not preface:
                 return response
-
-            preface = build_preface(category, model_id)
 
             if isinstance(response, StreamingResponse):
                 return wrap_stream_with_preface(response, preface)

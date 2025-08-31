@@ -51,7 +51,7 @@ Check the Valves values to configure the router. Available options include:
 - `MODEL_STRUCT` – model ID for structured analysis.
 - `MODEL_CONTENT` – model ID for content generation.
 - `MODEL_VISION` – model ID for vision/multimodal prompts.
-- `PREFACE_ENABLED` – toggle to include or omit the routing preface ("(detected {category} prompt, routing to {model})").
+- `PREFACE_ENABLED` – toggle to include or omit the routing prefaces.
 
 ---
 
@@ -96,8 +96,9 @@ Windows PowerShell:
 ## Notes
 
 - The router defaults to `default` if the classification result does not match one of the known categories.
-- In OpenWebUI mode, Bedrock is called via the integrated `generate_chat_completion`.  
+- In OpenWebUI mode, Bedrock is called via the integrated `generate_chat_completion`.
 - In CLI mode, Bedrock is accessed directly via `boto3`.
+- When a model request fails, the router falls back to the default model and adds `(Routing error. If this happens repeatedly, please report it. Falling back to {model}.)` before the answer.
 
 ## License
 

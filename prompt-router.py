@@ -199,7 +199,7 @@ if OPENWEBUI:
             resp = await generate_chat_completion(__request__, body, user)
 
             # 5) Append routed model info as italic Markdown with a divider line
-            if resp.get("choices") and resp["choices"][0].get("message"):
+            if resp["choices"] and resp["choices"][0] and resp["choices"][0]["message"]:
                 resp["choices"][0]["message"]["content"] += f"\n\n---\n_(Routed to: {target_model})_"
 
             return resp

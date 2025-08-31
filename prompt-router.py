@@ -1,4 +1,4 @@
-﻿"""
+"""
 title: Prompt Router Pipe
 author: sunborn23
 author_url: https://github.com/sunborn23
@@ -6,361 +6,377 @@ repo_url: https://github.com/sunborn23/prompt-router
 version: 1.0
 """
 
+import json
+import logging
 import os
 import sys
-import json
+from typing import Any, AsyncIterator, Dict
 
-try:
-    # -------------------------------
-    # OpenWebUI runtime (Pipe mode)
-    # -------------------------------
-    from pydantic import BaseModel, Field
+try:  # OpenWebUI runtime (Pipe mode)
     from fastapi import Request
     from open_webui.models.users import Users
     from open_webui.utils.chat import generate_chat_completion
+    from pydantic import BaseModel, Field
     from starlette.responses import StreamingResponse
 
     OPENWEBUI = True
-except ImportError:
-    # -------------------------------
-    # Local CLI runtime (no OpenWebUI)
-    # -------------------------------
-    import boto3  # Only needed locally
+except ImportError:  # Local CLI runtime
+    import boto3
 
     OPENWEBUI = False
 
 
-class Router:
-    """
-    Core classification prompt builder and category registry.
-    OpenWebUI and CLI modes both use this class to keep logic DRY.
-    """
+logger = logging.getLogger(__name__)
 
-    def __init__(self, valves=None):
-        # ---------------------------------------------------------------------
-        # Hardcoded categories and model mapping
-        #
-        # Use valves to inject the actual target model IDs from the Admin UI.
-        # Fallbacks are just examples – please copy the exact IDs from Admin → Models.
-        # ---------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+
+def build_classifier_prompt(
+    user_prompt: str, categories: Dict[str, Dict[str, str]]
+) -> str:
+    """Create a deterministic classification prompt for Nova Micro."""
+
+    descriptions = "\n".join(
+        f"- {name}: {cfg['description']}" for name, cfg in categories.items()
+    )
+    return (
+        "You are a classification assistant.\n"
+        "Your task is to read the user's prompt and assign it to exactly one "
+        "category from the list below.\n"
+        "Return only the category name in lowercase without explanations or "
+        "additional text.\n\n"
+        f"Categories:\n{descriptions}\n\n---\n\n"
+        "Example input:\n"
+        "Can you help me debug this Python error?\n"
+        "Example output:\n"
+        "coding\n\n---\n\n"
+        "Now classify the following user prompt:\n"
+        f"{user_prompt}"
+    )
+
+
+def build_preface(model_id: str) -> str:
+    """Return the markdown preface for routing information."""
+
+    return f"_(routing to: {model_id})_\n\n---\n\n"
+
+
+def choose_category_or_default(raw_label: str, categories: Dict[str, Any]) -> str:
+    """Normalize the classifier label or fall back to ``default``."""
+
+    label = (raw_label or "").strip().lower()
+    return label if label in categories else "default"
+
+
+def wrap_stream_with_preface(
+    upstream: StreamingResponse, preface_text: str
+) -> StreamingResponse:
+    """Prepend a preface chunk to a streaming response."""
+
+    async def stream() -> AsyncIterator[bytes]:
+        chunk = {
+            "id": "router-preface",
+            "object": "chat.completion.chunk",
+            "choices": [{"delta": {"content": preface_text}}],
+        }
+        yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+
+        async for part in upstream.body_iterator:
+            yield part
+
+    headers = dict(getattr(upstream, "headers", {}) or {})
+    headers.pop("content-length", None)
+    return StreamingResponse(stream(), media_type=upstream.media_type, headers=headers)
+
+
+# ---------------------------------------------------------------------------
+# Core router
+# ---------------------------------------------------------------------------
+
+
+class CategoryRouter:
+    """Registry of categories and associated model IDs."""
+
+    def __init__(self, valves: Dict[str, str]):
         v = valves or {}
         self.categories = {
             "default": {
-                "model": v.get("MODEL_ID_DEFAULT", "azure.gpt-4o-mini-example"),
-                "description": "For everyday, relatively simple requests with short to medium length (1–3 paragraphs). Covers small talk, short explanations, summaries, or general questions that do not require deep reasoning."
+                "model": v.get("MODEL_DEFAULT", "azure.gpt-4o-mini"),
+                "description": (
+                    "For everyday, relatively simple requests with short to medium "
+                    "length (1–3 paragraphs). Covers small talk, short explanations, "
+                    "summaries, or general questions that do not require deep reasoning."
+                ),
             },
             "coding": {
-                "model": v.get("MODEL_ID_CODING", "eu.anthropic.claude-sonnet-4.1-example"),
-                "description": "For technical requests related to programming, debugging, architecture, or IT tools. Includes code snippets, error messages, best practices, and in-depth technical explanations."
+                "model": v.get(
+                    "MODEL_CODING", "eu.anthropic.claude-sonnet-4-20250514-v1:0"
+                ),
+                "description": (
+                    "For technical requests related to programming, debugging, "
+                    "architecture, or IT tools. Includes code snippets, error messages, "
+                    "and in-depth technical explanations."
+                ),
             },
             "deep-reasoning": {
-                "model": v.get("MODEL_ID_DEEP", "azure.gpt-4o-example"),
-                "description": "For complex, multi-layered tasks requiring high accuracy, creative solutions, or multimodality (e.g. images). Best suited for prompts with longer text (several paragraphs to full pages) or high logical complexity."
+                "model": v.get("MODEL_DEEP", "azure.gpt-4o"),
+                "description": (
+                    "For complex, multi-layered tasks requiring high accuracy, creative "
+                    "solutions, or multimodality (e.g. images)."
+                ),
             },
             "structured-analysis": {
-                "model": v.get("MODEL_ID_STRUCT", "eu.anthropic.claude-sonnet-4.1-example"),
-                "description": "For tasks that need detailed, well-structured, text-heavy explanations. Useful for longer documents, strategic analyses, or conceptual requests requiring clarity and structure."
+                "model": v.get(
+                    "MODEL_STRUCT", "eu.anthropic.claude-sonnet-4-20250514-v1:0"
+                ),
+                "description": (
+                    "For tasks that need detailed, well-structured, text-heavy "
+                    "explanations. Useful for longer documents or strategic analyses."
+                ),
             },
             "content-generation": {
-                "model": v.get("MODEL_ID_CONTENT", "azure.gpt-4o-example"),
-                "description": "For creating polished or longer-form text such as emails, blog posts, marketing copy, reports, or presentations. Emphasis on tone, coherence, and style control. Typically multiple paragraphs or more."
+                "model": v.get("MODEL_CONTENT", "azure.gpt-4o"),
+                "description": (
+                    "For creating polished or longer-form text such as emails, blog "
+                    "posts, or presentations."
+                ),
             },
             "vision": {
-                "model": v.get("MODEL_ID_VISION", "eu.mistral.pixtral-large-2502-v1:0-example"),
-                "description": "For requests involving images or visual content – such as image description, visual analysis, diagram interpretation, or multimodal tasks."
+                "model": v.get("MODEL_VISION", "eu.mistral.pixtral-large-2502-v1:0"),
+                "description": (
+                    "For requests involving images or visual content such as image "
+                    "description or multimodal tasks."
+                ),
             },
         }
 
-    def build_classifier_prompt(self, user_prompt: str) -> str:
-        """
-        Build a strict classification prompt for Nova Micro.
+    def classifier_prompt(self, user_prompt: str) -> str:
+        return build_classifier_prompt(user_prompt, self.categories)
 
-        Contract:
-        - Return only one of the known category names (lowercase).
-        - No extra text. No explanations.
-        """
-        cat_desc = "\n".join(
-            [f"- {name}: {cfg['description']}" for name, cfg in self.categories.items()]
-        )
-        return f"""
-You are a classification assistant.
-Your task is to read the user's prompt and assign it to exactly one category from the list below.
-Return only the category *name* as plain text in lowercase. Do not explain your choice. Do not output anything else.
-
-Categories:
-{cat_desc}
-
----
-
-Example input:
-"Can you help me debug this Python error?"
-Example output:
-coding
-
----
-
-Now classify the following user prompt:
-{user_prompt}
-""".strip()
+    def model_for(self, category: str) -> str:
+        return self.categories.get(category, self.categories["default"])["model"]
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # OpenWebUI Pipe mode
-# =============================================================================
+# ---------------------------------------------------------------------------
+
+
 if OPENWEBUI:
 
     class Pipe:
-        """
-        OpenWebUI Pipe that:
-        1) Calls a small classifier model (e.g., Nova Micro) to label the intent.
-        2) Rewrites the request body with the target model based on that label.
-        3) Forwards the original conversation to the chosen model.
-        """
-
         class Valves(BaseModel):
-            """
-            Admin-configurable knobs exposed in the WebUI.
-            """
-            # Classifier (make sure the prefix matches your environment, e.g. 'eu.amazon...')
-            MODEL_ID_CLASSIFIER: str = Field(
-                default="eu.amazon.nova-micro-v1:0",
+            CLASSIFIER_MODEL_ID: str = Field(
+                "eu.amazon.nova-micro-v1:0",
                 description="Model ID used for classification for routing decisions.",
             )
-            # Target models – update with exact IDs from Admin → Models
-            MODEL_ID_DEFAULT: str = Field(
+            MODEL_DEFAULT: str = Field(
                 "azure.gpt-4o-mini",
-                description="Model ID for default / smalltalk prompts"
+                description="Model ID for default / smalltalk prompts",
             )
-            MODEL_ID_CODING: str = Field(
+            MODEL_CODING: str = Field(
                 "eu.anthropic.claude-sonnet-4-20250514-v1:0",
-                description="Model ID for coding / tech prompts"
+                description="Model ID for coding / tech prompts",
             )
-            MODEL_ID_DEEP: str = Field(
+            MODEL_DEEP: str = Field(
                 "azure.gpt-4o",
-                description="Model ID for deep reasoning / complex queries prompts"
+                description="Model ID for deep reasoning / complex queries prompts",
             )
-            MODEL_ID_STRUCT: str = Field(
+            MODEL_STRUCT: str = Field(
                 "eu.anthropic.claude-sonnet-4-20250514-v1:0",
-                description="Model ID for structured analysis prompts"
+                description="Model ID for structured analysis prompts",
             )
-            MODEL_ID_CONTENT: str = Field(
+            MODEL_CONTENT: str = Field(
                 "azure.gpt-4o",
-                description="Modle ID for content generation / long-form writing prompts"
+                description="Model ID for content generation / long-form writing prompts",
             )
-            MODEL_ID_VISION: str = Field(
+            MODEL_VISION: str = Field(
                 "eu.mistral.pixtral-large-2502-v1:0",
-                description="Model ID for vision / multimodal prompts"
+                description="Model ID for vision / multimodal prompts",
+            )
+            PREFACE_ENABLED: bool = Field(
+                True, description="If false, routing preface will be omitted."
             )
 
-        def __init__(self):
-            # Initialize configurable valves and the router registry once.
+        def __init__(self) -> None:
             self.valves = self.Valves()
-            self.router = Router(valves=self.valves.model_dump())
+            self.router = CategoryRouter(self.valves.model_dump())
 
-        def pipes(self):
-            return [
-                {
-                    "id": "PROMPT_ROUTER",
-                    "name": "Auto Prompt Router",
-                    "description": (
-                        "Automatically select the right model based on your prompt. "
-                        "Chooses between GPT-4o, GPT-4o-mini, Claude 4 Sonnet and Pixtral Large."
-                    ),
-                    "pipe": self.pipe,
-                }
-            ]
+        async def pipe(
+            self, body: Dict[str, Any], __user__: Dict[str, Any], __request__: Request
+        ):
+            """Route the prompt to a model chosen by a classifier."""
 
-        async def pipe(self, body: dict, __user__: dict, __request__: Request):
-            """
-            Main entry point for routing a user prompt to the most suitable model.
-            Steps:
-            1) Extract user prompt
-            2) Classify intent via small classifier model
-            3) Resolve target model (fallback to 'default' if unknown)
-            4) Forward the original request to the resolved model
-            5) Prepend routing info to the response (streaming or non-streaming)
-            """
-            # Resolve OpenWebUI user for provider invocation
             user = Users.get_user_by_id((__user__ or {}).get("id"))
 
-            # 1) Extract last user message content (defensive access)
-            user_prompt = self._extract_last_user_message(body)
+            prompt = self._extract_last_user_message(body)
+            classifier_request = self._build_classifier_request(prompt)
 
-            # 2) Build and call classifier request
-            classifier_body = self._build_classifier_request(user_prompt)
-            classifier_response = await generate_chat_completion(__request__, classifier_body, user)
+            try:
+                clf_response = await generate_chat_completion(
+                    __request__, classifier_request, user
+                )
+                raw_label = self._parse_classifier_label(clf_response)
+            except Exception as exc:  # classifier failure
+                logger.exception("Classifier request failed: %s", exc)
+                raw_label = ""
 
-            # 3) Parse and normalize category; fallback to 'default'
-            raw_category = self._parse_category_from_response(classifier_response)
-            category = self._normalize_category(raw_category)
+            category = choose_category_or_default(raw_label, self.router.categories)
+            model_id = self.router.model_for(category)
+            logger.info("Routing category '%s' to model '%s'", category, model_id)
 
-            # 4) Route to target model and forward original request
-            target_model_id = self._resolve_target_model(category)
-            body["model"] = target_model_id
-            routed_response = await generate_chat_completion(__request__, body, user)
+            body["model"] = model_id
+            try:
+                response = await generate_chat_completion(__request__, body, user)
+            except Exception as exc:
+                logger.exception(
+                    "Request to model '%s' failed; falling back to default: %s",
+                    model_id,
+                    exc,
+                )
+                if model_id != self.valves.MODEL_DEFAULT:
+                    body["model"] = self.valves.MODEL_DEFAULT
+                    model_id = self.valves.MODEL_DEFAULT
+                    try:
+                        response = await generate_chat_completion(
+                            __request__, body, user
+                        )
+                    except Exception as inner_exc:
+                        logger.exception(
+                            "Fallback to default model '%s' also failed: %s",
+                            self.valves.MODEL_DEFAULT,
+                            inner_exc,
+                        )
+                        return {"error": "All model requests failed."}
+                else:
+                    return {"error": "Model request failed."}
 
-            # 5) Prepend routing info (works for streaming and non-streaming responses)
-            if isinstance(routed_response, StreamingResponse):
-                return await self._prepend_streaming_preface(routed_response, target_model_id)
-            else:
-                self._prepend_non_streaming_preface(routed_response, target_model_id)
-                return routed_response
+            if not self.valves.PREFACE_ENABLED:
+                return response
 
-        # -----------------------------
-        # Internal helper methods
-        # -----------------------------
+            preface = build_preface(model_id)
 
-        def _extract_last_user_message(self, body: dict) -> str:
-            """Safely extract the latest user message content from the request body."""
+            if isinstance(response, StreamingResponse):
+                return wrap_stream_with_preface(response, preface)
+
+            self._prepend_non_streaming_preface(response, preface)
+            return response
+
+        # ------------------------------------------------------------------
+        # Helpers
+        # ------------------------------------------------------------------
+
+        def _extract_last_user_message(self, body: Dict[str, Any]) -> str:
             messages = (body or {}).get("messages")
             if not isinstance(messages, list) or not messages:
                 return ""
             last = messages[-1] or {}
             return str(last.get("content", "")).strip()
 
-        def _build_classifier_request(self, user_prompt: str) -> dict:
-            """Create request body for the small classifier model."""
+        def _build_classifier_request(self, prompt: str) -> Dict[str, Any]:
             return {
-                "model": self.valves.MODEL_ID_CLASSIFIER,
+                "model": self.valves.CLASSIFIER_MODEL_ID,
                 "messages": [
-                    {"role": "user", "content": self.router.build_classifier_prompt(user_prompt)}
+                    {"role": "user", "content": self.router.classifier_prompt(prompt)}
                 ],
                 "stream": False,
             }
 
-        def _parse_category_from_response(self, clf_resp: dict) -> str:
-            """Parse raw category string from classifier response."""
-            choices = (clf_resp or {}).get("choices") or []
-            first = (choices[0] if choices else {}) or {}
-            message = first.get("message") or {}
-            raw = message.get("content", "")
-            return str(raw).strip().lower()
-
-        def _normalize_category(self, category: str) -> str:
-            """Normalize to a known category or fallback to 'default'."""
-            return category if category in self.router.categories else "default"
-
-        def _resolve_target_model(self, category: str) -> str:
-            """Resolve model id for a category, fallback to MODEL_ID_DEFAULT."""
-            entry = self.router.categories.get(category, {})
-            return entry.get("model", getattr(self.valves, "MODEL_ID_DEFAULT", "default"))
-
-        async def _prepend_streaming_preface(self, upstream: StreamingResponse, model_id: str) -> StreamingResponse:
-            """
-            Wrap StreamingResponse and inject a small preface chunk before
-            forwarding the original upstream stream untouched.
-            """
-            async def generator():
-                # Send one OpenAI-style SSE chunk with a delta containing the preface.
-                preface_text = f"_(routing to: {model_id})_\n\n---\n\n"
-                preface_chunk = {
-                    "id": "router-info",
-                    "object": "chat.completion.chunk",
-                    "choices": [{"delta": {"content": preface_text}}],
-                }
-                yield f"data: {json.dumps(preface_chunk)}\n\n".encode("utf-8")
-
-                # Forward original stream without modification.
-                async for chunk in upstream.body_iterator:
-                    yield chunk
-
-            # Preserve media type and headers, avoid content-length mismatch.
-            headers = dict(getattr(upstream, "headers", {}) or {})
-            headers.pop("content-length", None)
-            return StreamingResponse(
-                generator(),
-                media_type=getattr(upstream, "media_type", "text/event-stream"),
-                headers=headers,
-            )
-
-        def _prepend_non_streaming_preface(self, resp: dict, model_id: str) -> None:
-            """Prepend routing preface to the assistant message for non-stream responses."""
+        def _parse_classifier_label(self, response: Dict[str, Any]) -> str:
             try:
-                choices = (resp or {}).get("choices")
+                return response["choices"][0]["message"][
+                    "content"
+                ]  # type: ignore[index]
+            except Exception:
+                return ""
+
+        def _prepend_non_streaming_preface(
+            self, resp: Dict[str, Any], preface: str
+        ) -> None:
+            try:
+                choices = resp.get("choices")
                 if not isinstance(choices, list) or not choices:
                     return
-                first = choices[0] or {}
-                message = first.get("message")
+                message = (choices[0] or {}).get("message")
                 if not isinstance(message, dict):
                     return
-                original = message.get("content") or ""
-                preface = f"_(routing to: {model_id})_\n\n---\n\n"
-                message["content"] = preface + str(original)
+                content = message.get("content", "")
+                message["content"] = preface + str(content)
             except Exception:
-                # Keep silent in production flow; preface is non-critical.
                 pass
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Local CLI test mode
-# =============================================================================
+# ---------------------------------------------------------------------------
+
+
 else:
-    def classify_with_bedrock(router: Router, user_prompt: str) -> str:
-        """
-        Local classifier call using boto3 and Amazon Bedrock (Nova Micro), mainly used for testing.
-        """
-        MODEL_ID = os.getenv("BEDROCK_CLASSIFIER_MODEL_ID", "eu.amazon.nova-micro-v1:0")
-        REGION = os.getenv("AWS_REGION", "eu-central-1")
 
-        client = boto3.client("bedrock-runtime", region_name=REGION)
+    def classify_with_bedrock(router: CategoryRouter, user_prompt: str) -> str:
+        """Classify a prompt using AWS Bedrock (Nova Micro)."""
 
-        # Nova (Messages API) request body
+        model_id = os.getenv("BEDROCK_CLASSIFIER_MODEL_ID", "eu.amazon.nova-micro-v1:0")
+        region = os.getenv("AWS_REGION", "eu-central-1")
+        client = boto3.client("bedrock-runtime", region_name=region)
+
         body = {
             "messages": [
                 {
                     "role": "user",
-                    "content": [{"text": router.build_classifier_prompt(user_prompt)}],
+                    "content": [{"text": router.classifier_prompt(user_prompt)}],
                 }
             ],
             "inferenceConfig": {"maxTokens": 50, "temperature": 0.0, "topP": 1.0},
         }
 
         resp = client.invoke_model(
-            modelId=MODEL_ID,
+            modelId=model_id,
             body=json.dumps(body),
             accept="application/json",
             contentType="application/json",
         )
         result = json.loads(resp["body"].read())
-
-        # Try Messages output first; fall back to legacy key if present.
         try:
             return result["output"]["message"]["content"][0]["text"].strip().lower()
         except Exception:
             return (result.get("outputText", "") or "").strip().lower()
 
-
-    def main():
-        """
-        Simple REPL for local testing:
-        - Runs the same classifier prompt locally against Bedrock Nova Micro.
-        - Prints the resolved category and mapped target model.
-        """
-        router = Router()
+    def main() -> None:
+        router = CategoryRouter({})
         print("=== Local Router Test (Bedrock Nova Micro) ===")
         print(f"Region: {os.getenv('AWS_REGION', 'eu-central-1')}")
-        print(f"Model : {os.getenv('BEDROCK_CLASSIFIER_MODEL_ID', 'eu.amazon.nova-micro-v1:0')}")
+        print(
+            f"Model : {os.getenv('BEDROCK_CLASSIFIER_MODEL_ID', 'eu.amazon.nova-micro-v1:0')}"
+        )
         print("Type 'exit' or 'quit' to leave.\n")
 
         while True:
             try:
                 prompt = input("Prompt> ")
-                if prompt.strip().lower() in ("exit", "quit"):
+                if prompt.strip().lower() in {"exit", "quit"}:
                     break
 
-                category = classify_with_bedrock(router, prompt)
-                if category not in router.categories:
-                    category = "default"
-
+                raw = classify_with_bedrock(router, prompt)
+                category = choose_category_or_default(raw, router.categories)
+                model_id = router.model_for(category)
                 print(f"Category     : {category}")
-                print(f"Target model : {router.categories[category]['model']}\n")
-
+                print(f"Target model : {model_id}\n")
             except KeyboardInterrupt:
                 print("\nExiting.")
                 sys.exit(0)
-            except Exception as e:
-                print("Error:", e)
-
+            except Exception as exc:
+                print("Error:", exc)
 
     if __name__ == "__main__":
         main()
+
+
+# Manual test steps:
+# - Non-stream test and verify preface renders correctly (no Markdown heading).
+# - Stream test and verify preface chunk arrives first.
+# - Unknown category → default model.
+# - Broken model ID → fallback to default model once, then graceful error.

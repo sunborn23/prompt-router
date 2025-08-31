@@ -3,7 +3,7 @@ title: Prompt Router Pipe
 author: sunborn23
 author_url: https://github.com/sunborn23
 repo_url: https://github.com/sunborn23/prompt-router
-version: 0.1
+version: 0.2
 """
 
 import os
@@ -33,53 +33,38 @@ class Router:
     OpenWebUI and CLI modes both use this class to keep logic DRY.
     """
 
-    def __init__(self):
+    def __init__(self, valves=None):
         # ---------------------------------------------------------------------
-        # Hardcoded categories + model mapping
-        # - Keep keys lowercase; the classifier is instructed to return only
-        #   the category *name*, which we normalize to lowercase in CLI mode.
-        # - Descriptions must stay concise, deterministic, and unambiguous so
-        #   a small classifier model (Nova Micro) can pick the right label.
+        # Hardcoded categories and model mapping
+        #
+        # Use valves to inject the actual target model IDs from the Admin UI.
+        # Fallbacks are just examples – please copy the exact IDs from Admin → Models.
         # ---------------------------------------------------------------------
+        v = valves or {}
         self.categories = {
             "default": {
-                "model": "openai/gpt-4o-mini",
-                "description": (
-                    "For everyday, relatively simple requests with short to medium length "
-                    "(1–3 paragraphs). Covers small talk, short explanations, summaries, or "
-                    "general questions that do not require deep reasoning."
-                ),
+                "model": v.get("MODEL_DEFAULT", "azure.gpt-4o-mini"),
+                "description": "For everyday, relatively simple requests with short to medium length (1–3 paragraphs). Covers small talk, short explanations, summaries, or general questions that do not require deep reasoning."
             },
             "coding": {
-                "model": "anthropic/claude-4-sonnet",
-                "description": (
-                    "For technical requests related to programming, debugging, architecture, "
-                    "or IT tools. Includes code snippets, error messages, best practices, and "
-                    "in-depth technical explanations."
-                ),
+                "model": v.get("MODEL_CODING", "eu.anthropic.claude-sonnet-4.1"),
+                "description": "For technical requests related to programming, debugging, architecture, or IT tools. Includes code snippets, error messages, best practices, and in-depth technical explanations."
             },
             "deep-reasoning": {
-                "model": "openai/gpt-4o",
-                "description": (
-                    "For complex, multi-layered tasks requiring high accuracy, creative "
-                    "solutions, or multimodality (e.g. images). Best suited for prompts with "
-                    "longer text (several paragraphs to full pages) or high logical complexity."
-                ),
+                "model": v.get("MODEL_DEEP", "azure.gpt-4o"),
+                "description": "For complex, multi-layered tasks requiring high accuracy, creative solutions, or multimodality (e.g. images). Best suited for prompts with longer text (several paragraphs to full pages) or high logical complexity."
             },
             "structured-analysis": {
-                "model": "anthropic/claude-4-sonnet",
-                "description": (
-                    "For tasks that need detailed, well-structured, text-heavy explanations. "
-                    "Useful for longer documents, strategic analyses, or conceptual requests "
-                    "requiring clarity and structure."
-                ),
+                "model": v.get("MODEL_STRUCT", "eu.anthropic.claude-sonnet-4.1"),
+                "description": "For tasks that need detailed, well-structured, text-heavy explanations. Useful for longer documents, strategic analyses, or conceptual requests requiring clarity and structure."
+            },
+            "content-generation": {
+                "model": v.get("MODEL_CONTENT", "azure.gpt-4o"),
+                "description": "For creating polished or longer-form text such as emails, blog posts, marketing copy, reports, or presentations. Emphasis on tone, coherence, and style control. Typically multiple paragraphs or more."
             },
             "vision": {
-                "model": "mistral/pixtral-large-2502",
-                "description": (
-                    "For requests involving images or visual content – such as image "
-                    "description, visual analysis, diagram interpretation, or multimodal tasks."
-                ),
+                "model": v.get("MODEL_VISION", "eu.mistral.pixtral-large-2502-v1:0"),
+                "description": "For requests involving images or visual content – such as image description, visual analysis, diagram interpretation, or multimodal tasks."
             },
         }
 
@@ -132,13 +117,36 @@ if OPENWEBUI:
         class Valves(BaseModel):
             """
             Admin-configurable knobs exposed in the WebUI.
-
-            - CLASSIFIER_MODEL_ID: which small/cheap model to use for the routing decision.
-              In OpenWebUI mode, credentials/providers are already configured centrally.
             """
+            # Classifier (make sure the prefix matches your environment, e.g. 'eu.amazon...')
             CLASSIFIER_MODEL_ID: str = Field(
                 default="eu.amazon.nova-micro-v1:0",
-                description="Classifier model used inside OpenWebUI for routing decisions.",
+                description="Model ID used for classification for routing decisions.",
+            )
+            # Target models – update with exact IDs from Admin → Models
+            MODEL_DEFAULT: str = Field(
+                "azure.gpt-4o-mini",
+                description="Model ID for default / smalltalk prompts"
+            )
+            MODEL_CODING: str = Field(
+                "eu.anthropic.claude-sonnet-4-20250514-v1:0",
+                description="Model ID for coding / tech prompts"
+            )
+            MODEL_DEEP: str = Field(
+                "azure.gpt-4o",
+                description="Model ID for deep reasoning / complex queries prompts"
+            )
+            MODEL_STRUCT: str = Field(
+                "eu.anthropic.claude-sonnet-4-20250514-v1:0",
+                description="Model ID for structured analysis prompts"
+            )
+            MODEL_CONTENT: str = Field(
+                "azure.gpt-4o",
+                description="Modle ID for content generation / long-form writing prompts"
+            )
+            MODEL_VISION: str = Field(
+                "eu.mistral.pixtral-large-2502-v1:0",
+                description="Model ID for vision / multimodal prompts"
             )
 
         def __init__(self):
@@ -148,8 +156,8 @@ if OPENWEBUI:
         def pipes(self):
             return [
                 {
-                    "id": "AUTO_ROUTER",
-                    "name": "Auto-select model",
+                    "id": "PROMPT_ROUTER",
+                    "name": "automatic",
                     "description": (
                         "Automatically select the right model based on your prompt. "
                         "Chooses between GPT-4o, GPT-4o-mini, Claude 4 Sonnet and Pixtral Large."
@@ -226,6 +234,7 @@ else:
         except Exception:
             return (result.get("outputText", "") or "").strip().lower()
 
+
     def main():
         """
         Simple REPL for local testing:
@@ -256,6 +265,7 @@ else:
                 sys.exit(0)
             except Exception as e:
                 print("Error:", e)
+
 
     if __name__ == "__main__":
         main()

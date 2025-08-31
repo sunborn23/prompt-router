@@ -3,7 +3,7 @@ title: Prompt Router Pipe
 author: sunborn23
 author_url: https://github.com/sunborn23
 repo_url: https://github.com/sunborn23/prompt-router
-version: 0.3
+version: 1.0
 """
 
 import os
@@ -109,35 +109,6 @@ Now classify the following user prompt:
 # =============================================================================
 if OPENWEBUI:
 
-    async def _prepend_streamed_preface(upstream: StreamingResponse, model_id: str) -> StreamingResponse:
-        """
-        Wrap a StreamingResponse and inject one small 'preface' chunk before
-        passing through the original upstream stream untouched.
-        """
-
-        async def generator():
-            # OpenAI-style SSE chunk with a delta that contains your preface
-            preface = f"_(routing to: {model_id})_\n\n---\n\n"
-            pre_chunk = {
-                "id": "router-info",
-                "object": "chat.completion.chunk",
-                "choices": [{"delta": {"content": preface}}]
-            }
-            yield f"data: {json.dumps(pre_chunk)}\n\n".encode("utf-8")
-
-            # Forward the original stream untouched
-            async for chunk in upstream.body_iterator:
-                yield chunk
-
-        # Preserve media type and headers (avoid content-length)
-        headers = dict(getattr(upstream, "headers", {}) or {})
-        headers.pop("content-length", None)
-        return StreamingResponse(
-            generator(),
-            media_type=getattr(upstream, "media_type", "text/event-stream"),
-            headers=headers
-        )
-
     class Pipe:
         """
         OpenWebUI Pipe that:
@@ -182,6 +153,7 @@ if OPENWEBUI:
             )
 
         def __init__(self):
+            # Initialize configurable valves and the router registry once.
             self.valves = self.Valves()
             self.router = Router(valves=self.valves.model_dump())
 
@@ -200,49 +172,123 @@ if OPENWEBUI:
 
         async def pipe(self, body: dict, __user__: dict, __request__: Request):
             """
-            Main entry point for automatically routing a user prompt to the adequate model.
+            Main entry point for routing a user prompt to the most suitable model.
+            Steps:
+            1) Extract user prompt
+            2) Classify intent via small classifier model
+            3) Resolve target model (fallback to 'default' if unknown)
+            4) Forward the original request to the resolved model
+            5) Prepend routing info to the response (streaming or non-streaming)
             """
-            # Resolve OpenWebUI user
-            user = Users.get_user_by_id(__user__["id"])
+            # Resolve OpenWebUI user for provider invocation
+            user = Users.get_user_by_id((__user__ or {}).get("id"))
 
-            # 1) Extract the user message content
-            user_prompt = body.get("messages", [{}])[-1].get("content", "")
+            # 1) Extract last user message content (defensive access)
+            user_prompt = self._extract_last_user_message(body)
 
-            # 2) Build classification call (OpenWebUI handles provider invocation)
-            clf_body = {
+            # 2) Build and call classifier request
+            classifier_body = self._build_classifier_request(user_prompt)
+            classifier_response = await generate_chat_completion(__request__, classifier_body, user)
+
+            # 3) Parse and normalize category; fallback to 'default'
+            raw_category = self._parse_category_from_response(classifier_response)
+            category = self._normalize_category(raw_category)
+
+            # 4) Route to target model and forward original request
+            target_model_id = self._resolve_target_model(category)
+            body["model"] = target_model_id
+            routed_response = await generate_chat_completion(__request__, body, user)
+
+            # 5) Prepend routing info (works for streaming and non-streaming responses)
+            if isinstance(routed_response, StreamingResponse):
+                return await self._prepend_streaming_preface(routed_response, target_model_id)
+            else:
+                self._prepend_non_streaming_preface(routed_response, target_model_id)
+                return routed_response
+
+        # -----------------------------
+        # Internal helper methods
+        # -----------------------------
+
+        def _extract_last_user_message(self, body: dict) -> str:
+            """Safely extract the latest user message content from the request body."""
+            messages = (body or {}).get("messages")
+            if not isinstance(messages, list) or not messages:
+                return ""
+            last = messages[-1] or {}
+            return str(last.get("content", "")).strip()
+
+        def _build_classifier_request(self, user_prompt: str) -> dict:
+            """Create request body for the small classifier model."""
+            return {
                 "model": self.valves.MODEL_ID_CLASSIFIER,
-                "messages": [{"role": "user", "content": self.router.build_classifier_prompt(user_prompt)}],
+                "messages": [
+                    {"role": "user", "content": self.router.build_classifier_prompt(user_prompt)}
+                ],
                 "stream": False,
             }
 
-            clf_resp = await generate_chat_completion(__request__, clf_body, user)
-            category_raw = clf_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
-            category = (category_raw or "").strip().lower()
+        def _parse_category_from_response(self, clf_resp: dict) -> str:
+            """Parse raw category string from classifier response."""
+            choices = (clf_resp or {}).get("choices") or []
+            first = (choices[0] if choices else {}) or {}
+            message = first.get("message") or {}
+            raw = message.get("content", "")
+            return str(raw).strip().lower()
 
-            # 3) Fallback to "default" if unrecognized
-            if category not in self.router.categories:
-                category = "default"
+        def _normalize_category(self, category: str) -> str:
+            """Normalize to a known category or fallback to 'default'."""
+            return category if category in self.router.categories else "default"
 
-            # 4) Route: rewrite target model and forward original request
-            target_model = self.router.categories[category]["model"]
-            body["model"] = target_model
+        def _resolve_target_model(self, category: str) -> str:
+            """Resolve model id for a category, fallback to MODEL_ID_DEFAULT."""
+            entry = self.router.categories.get(category, {})
+            return entry.get("model", getattr(self.valves, "MODEL_ID_DEFAULT", "default"))
 
-            resp = await generate_chat_completion(__request__, body, user)
+        async def _prepend_streaming_preface(self, upstream: StreamingResponse, model_id: str) -> StreamingResponse:
+            """
+            Wrap StreamingResponse and inject a small preface chunk before
+            forwarding the original upstream stream untouched.
+            """
+            async def generator():
+                # Send one OpenAI-style SSE chunk with a delta containing the preface.
+                preface_text = f"_(routing to: {model_id})_\n\n---\n\n"
+                preface_chunk = {
+                    "id": "router-info",
+                    "object": "chat.completion.chunk",
+                    "choices": [{"delta": {"content": preface_text}}],
+                }
+                yield f"data: {json.dumps(preface_chunk)}\n\n".encode("utf-8")
 
-            # 5) Always show the preface at the TOP of the reply (streaming or not)
-            if isinstance(resp, StreamingResponse):
-                # Stream: inject preface as the first SSE chunk
-                return await _prepend_streamed_preface(resp, target_model)
-            else:
-                # Non-stream: prefix the assistant message content
-                try:
-                    msg = resp["choices"][0]["message"]
-                    original = msg.get("content") or ""
-                    preface = f"_(routing to: {target_model})_\n\n---\n\n"
-                    msg["content"] = preface + original
-                except Exception as e:
-                    print(f"[prompt-router] could not prepend preface: {e}")
-                return resp
+                # Forward original stream without modification.
+                async for chunk in upstream.body_iterator:
+                    yield chunk
+
+            # Preserve media type and headers, avoid content-length mismatch.
+            headers = dict(getattr(upstream, "headers", {}) or {})
+            headers.pop("content-length", None)
+            return StreamingResponse(
+                generator(),
+                media_type=getattr(upstream, "media_type", "text/event-stream"),
+                headers=headers,
+            )
+
+        def _prepend_non_streaming_preface(self, resp: dict, model_id: str) -> None:
+            """Prepend routing preface to the assistant message for non-stream responses."""
+            try:
+                choices = (resp or {}).get("choices")
+                if not isinstance(choices, list) or not choices:
+                    return
+                first = choices[0] or {}
+                message = first.get("message")
+                if not isinstance(message, dict):
+                    return
+                original = message.get("content") or ""
+                preface = f"_(routing to: {model_id})_\n\n---\n\n"
+                message["content"] = preface + str(original)
+            except Exception:
+                # Keep silent in production flow; preface is non-critical.
+                pass
 
 
 # =============================================================================

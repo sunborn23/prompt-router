@@ -58,10 +58,10 @@ def build_classifier_prompt(
     )
 
 
-def build_preface(model_id: str) -> str:
+def build_preface(category: str, model_id: str) -> str:
     """Return the markdown preface for routing information."""
 
-    return f"_(routing to: {model_id})_\n\n---\n\n"
+    return f"_(detected {category} prompt, routing to {model_id})_\n\n---\n\n"
 
 
 def choose_category_or_default(raw_label: str, categories: Dict[str, Any]) -> str:
@@ -257,7 +257,7 @@ if OPENWEBUI:
             if not self.valves.PREFACE_ENABLED:
                 return response
 
-            preface = build_preface(model_id)
+            preface = build_preface(category, model_id)
 
             if isinstance(response, StreamingResponse):
                 return wrap_stream_with_preface(response, preface)
@@ -319,6 +319,7 @@ if OPENWEBUI:
                 "pipe": Pipe,
             }
         ]
+
 
 # ---------------------------------------------------------------------------
 # Local CLI test mode

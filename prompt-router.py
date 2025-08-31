@@ -194,8 +194,15 @@ if OPENWEBUI:
                 category = "default"
 
             # 4) Route: rewrite target model and forward original request
-            body["model"] = self.router.categories[category]["model"]
-            return await generate_chat_completion(__request__, body, user)
+            target_model = self.router.categories[category]["model"]
+            body["model"] = target_model
+            resp = await generate_chat_completion(__request__, body, user)
+
+            # 5) Append routed model info as italic Markdown with a divider line
+            if resp.get("choices") and resp["choices"][0].get("message"):
+                resp["choices"][0]["message"]["content"] += f"\n\n---\n_(Routed to: {target_model})_"
+
+            return resp
 
 
 # =============================================================================

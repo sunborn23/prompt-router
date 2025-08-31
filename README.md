@@ -37,7 +37,7 @@ The router currently supports these categories:
 
 1. Copy `prompt-router.py` into your OpenWebUI **Functions** directory or upload it via the Admin UI.
 2. Restart OpenWebUI.  
-3. In the model selector, you will see a new entry: **Auto-select model**.  
+3. In the model selector, you will see a new entry: **Auto Prompt Router**.
 4. Select it, and the router will automatically classify and forward prompts.
 
 ---

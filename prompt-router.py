@@ -308,6 +308,19 @@ if OPENWEBUI:
             except Exception:
                 pass
 
+    def pipes() -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "prompt-router",
+                "name": "Auto Prompt Router",
+                "description": (
+                    "Automatically select the right model based on your prompt. "
+                    "Chooses between GPT-4o, GPT-4o-mini, Claude 4 Sonnet and Pixtral Large."
+                ),
+                "pipe": Pipe().pipe,
+            }
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Local CLI test mode

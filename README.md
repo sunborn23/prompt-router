@@ -1,6 +1,6 @@
 # Prompt Router
 
-This project provides a **single-file Prompt Router** (`prompt_router.py`) that can be used:
+This project provides a **single-file Prompt Router** (`prompt-router.py`) that can be used:
 
 1. As an **OpenWebUI Pipe** to automatically route user prompts to the most suitable model.
 2. As a **standalone CLI tool** for local testing with AWS Bedrock (Nova Micro).
@@ -35,7 +35,7 @@ The router currently supports these categories:
 
 ## Usage in OpenWebUI
 
-1. Copy `prompt_router.py` into your OpenWebUI **Functions** directory or upload it via the Admin UI.  
+1. Copy `prompt-router.py` into your OpenWebUI **Functions** directory or upload it via the Admin UI.
 2. Restart OpenWebUI.  
 3. In the model selector, you will see a new entry: **Auto-select model**.  
 4. Select it, and the router will automatically classify and forward prompts.
@@ -46,7 +46,7 @@ The router currently supports these categories:
 
 For local testing, the same file can be executed directly:
 
-    python prompt_router.py
+    python prompt-router.py
 
 This will start an interactive loop:
 

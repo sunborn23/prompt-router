@@ -287,9 +287,7 @@ if OPENWEBUI:
 
         def _parse_classifier_label(self, response: Dict[str, Any]) -> str:
             try:
-                return response["choices"][0]["message"][
-                    "content"
-                ]  # type: ignore[index]
+                return response["choices"][0]["message"]["content"]  # type: ignore[index]
             except Exception:
                 return ""
 
@@ -308,6 +306,19 @@ if OPENWEBUI:
             except Exception:
                 pass
 
+    # ---------------------------------------------------------------------------
+    def pipes() -> list[dict[str, object]]:
+        return [
+            {
+                "id": "prompt-router",
+                "name": "Auto Prompt Router",
+                "description": (
+                    "Automatically select the right model based on your prompt. "
+                    "Chooses between GPT-4o, GPT-4o-mini, Claude 4 Sonnet and Pixtral Large."
+                ),
+                "pipe": Pipe,
+            }
+        ]
 
 # ---------------------------------------------------------------------------
 # Local CLI test mode

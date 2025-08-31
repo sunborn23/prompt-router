@@ -35,10 +35,23 @@ The router currently supports these categories:
 
 ## Usage in OpenWebUI
 
-1. Copy `prompt-router.py` into your OpenWebUI **Functions** directory or upload it via the Admin UI.
-2. Restart OpenWebUI.  
-3. In the model selector, you will see a new entry: **Auto-select model**.  
-4. Select it, and the router will automatically classify and forward prompts.
+1. Go to Admin → Functions → New in the OpenWebUI interface.
+2. Create a new Pipe Function, give it a meaningful name and description.
+3. Copy the entire Python code from `prompt-router.py` into the editor and save.
+4. Enable the function using the toggle.
+5. In the model selector, you will see a new entry: **Auto Prompt Router**.
+6. Select it, and the router will automatically classify and forward prompts.
+
+Check the Valves values to configure the router. Available options include:
+
+- `CLASSIFIER_MODEL_ID` – model ID used for classification.
+- `MODEL_DEFAULT` – model ID for default/smalltalk prompts.
+- `MODEL_CODING` – model ID for coding/tech prompts.
+- `MODEL_DEEP` – model ID for deep reasoning/complex queries.
+- `MODEL_STRUCT` – model ID for structured analysis.
+- `MODEL_CONTENT` – model ID for content generation.
+- `MODEL_VISION` – model ID for vision/multimodal prompts.
+- `PREFACE_ENABLED` – toggle to include or omit the routing preface.
 
 ---
 

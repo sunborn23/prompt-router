@@ -237,7 +237,7 @@ if OPENWEBUI:
             model_id = self.router.model_for(category)
             logger.info("Routing category '%s' to model '%s'", category, model_id)
 
-            body["model"] = model_id
+            self._set_request_model(body, model_id)
             routing_error = False
             try:
                 response = await generate_chat_completion(__request__, body, user)
@@ -249,8 +249,8 @@ if OPENWEBUI:
                 )
                 if model_id != self.valves.MODEL_DEFAULT:
                     routing_error = True
-                    body["model"] = self.valves.MODEL_DEFAULT
                     model_id = self.valves.MODEL_DEFAULT
+                    self._set_request_model(body, model_id)
                     try:
                         response = await generate_chat_completion(
                             __request__, body, user
@@ -304,6 +304,10 @@ if OPENWEBUI:
                 return response["choices"][0]["message"]["content"]  # type: ignore[index]
             except Exception:
                 return ""
+
+        def _set_request_model(self, body: Dict[str, Any], model_id: str) -> None:
+            body["model"] = model_id
+            body.pop("provider", None)
 
         def _prepend_non_streaming_preface(
             self, resp: Dict[str, Any], preface: str

@@ -3,7 +3,7 @@ title: Prompt Router Pipe
 author: sunborn23
 author_url: https://github.com/sunborn23
 repo_url: https://github.com/sunborn23/prompt-router
-version: 0.2
+version: 0.3
 """
 
 import os

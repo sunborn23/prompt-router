@@ -32,6 +32,10 @@ class Router:
                 "model": "anthropic/claude-4-sonnet",
                 "description": "For tasks that need detailed, well-structured, text-heavy explanations. Useful for longer documents, strategic analyses, or conceptual requests requiring clarity and structure."
             },
+            "content-generation": {
+                "model": "openai/gpt-4o",
+                "description": "For creative or business writing tasks such as blog posts, emails, marketing copy, or presentations. Focused on high-quality, coherent, and stylistically appropriate text generation."
+            },
             "vision": {
                 "model": "mistral/pixtral-large-2502",
                 "description": "For requests involving images or visual content – such as image description, visual analysis, diagram interpretation, or multimodal tasks."

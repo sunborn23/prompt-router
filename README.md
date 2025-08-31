@@ -25,6 +25,9 @@ The router currently supports these categories:
 - **structured-analysis** → `anthropic/claude-4-sonnet`  
   Detailed, well-structured, text-heavy explanations (long documents, strategies, conceptual tasks).
 
+- **content-generation** → `openai/gpt-4o`  
+  Creative or business writing: blog posts, emails, marketing copy, or presentations. Focused on high-quality and stylistically coherent text generation.
+
 - **vision** → `mistral/pixtral-large-2502`  
   Prompts involving images or visual content (image description, diagram analysis, multimodal tasks).
 

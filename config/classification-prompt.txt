@@ -3,7 +3,7 @@ Your task is to read the user's prompt and assign it to exactly one category fro
 Return only the category *name* as plain text. Do not explain your choice. Do not output anything else.
 
 Categories:
-{categories-placeholder}
+{cat_desc}
 
 ---
 
@@ -15,3 +15,4 @@ Coding
 ---
 
 Now classify the following user prompt:
+{user_prompt}

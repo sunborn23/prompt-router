@@ -2,12 +2,10 @@
 from fastapi import Request
 from open_webui.models.users import Users
 from open_webui.utils.chat import generate_chat_completion
-import boto3, json
 
 class Pipe:
     class Valves(BaseModel):
-        AWS_REGION: str = Field("us-east-1", description="AWS Region for Bedrock")
-        CLASSIFIER_MODEL_ID: str = Field("amazon.nova-micro-v1:0", description="Nova Micro model ID")
+        CLASSIFIER_MODEL_ID: str = Field("amazon.nova-micro-v1:0", description="Classifier model in OpenWebUI")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -19,7 +17,7 @@ class Pipe:
                 "description": "For everyday, relatively simple requests with short to medium length (1–3 paragraphs). Covers small talk, short explanations, summaries, or general questions that do not require deep reasoning."
             },
             "Coding": {
-                "model": "openai/gpt-4o-mini",
+                "model": "anthropic/claude-4-sonnet",
                 "description": "For technical requests related to programming, debugging, architecture, or IT tools. Includes code snippets, error messages, best practices, and in-depth technical explanations."
             },
             "DeepReasoning": {
@@ -36,26 +34,31 @@ class Pipe:
             }
         }
 
-        # AWS Bedrock client
-        self.client = boto3.client("bedrock-runtime", region_name=self.valves.AWS_REGION)
-
     def pipes(self):
-        return [{"id": "AUTO_ROUTER", "name": "AUTO Router"}]
+        return [{"id": "AUTO_ROUTER", "name": "Auto-select model", "description": "Automatically select the right model based on your prompt. Chooses between GPT-4o, GPT-4o-mini, Claude 4 and Mixtral Large 2502.", "pipe": self.pipe}]
 
     async def pipe(self, body: dict, __user__: dict, __request__: Request):
         user = Users.get_user_by_id(__user__["id"])
 
-        # Extract last user message
+        # Get last user message
         user_prompt = body["messages"][-1]["content"]
 
-        # Classify with Nova Micro
-        category = self.classify_with_nova(user_prompt)
+        # Build classification prompt
+        classifier_prompt = self.build_classifier_prompt(user_prompt)
+
+        # Ask Nova Micro inside OpenWebUI
+        clf_body = {
+            "model": self.valves.CLASSIFIER_MODEL_ID,
+            "messages": [{"role": "user", "content": classifier_prompt}],
+            "stream": False
+        }
+        clf_resp = await generate_chat_completion(__request__, clf_body, user)
+        category = clf_resp.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+
         if category not in self.categories:
             category = "Default"
 
-        # Route to mapped model
         body["model"] = self.categories[category]["model"]
-
         return await generate_chat_completion(__request__, body, user)
 
     def build_classifier_prompt(self, user_prompt: str) -> str:
@@ -63,11 +66,21 @@ class Pipe:
             [f"- {name}: {cfg['description']}" for name, cfg in self.categories.items()]
         )
         return f"""
-You are a classification assistant. Your task is to assign the user's prompt to exactly one category.
-Return only the category name as plain text.
+You are a classification assistant.
+Your task is to read the user's prompt and assign it to exactly one category from the list below.
+Return only the category *name* as plain text. Do not explain your choice. Do not output anything else.
 
 Categories:
 {cat_desc}
+
+---
+
+Example input:
+"Can you help me debug this Python error?"
+Example output:
+Coding
+
+---
 
 Now classify the following user prompt:
 {user_prompt}

@@ -18,6 +18,7 @@ try:
     from fastapi import Request
     from open_webui.models.users import Users
     from open_webui.utils.chat import generate_chat_completion
+    from starlette.responses import StreamingResponse
 
     OPENWEBUI = True
 except ImportError:
@@ -108,6 +109,35 @@ Now classify the following user prompt:
 # =============================================================================
 if OPENWEBUI:
 
+    async def _prepend_streamed_preface(upstream: StreamingResponse, model_id: str) -> StreamingResponse:
+        """
+        Wrap a StreamingResponse and inject one small 'preface' chunk before
+        passing through the original upstream stream untouched.
+        """
+
+        async def generator():
+            # OpenAI-style SSE chunk with a delta that contains your preface
+            preface = f"_(routing to: {model_id})_\n\n---\n\n"
+            pre_chunk = {
+                "id": "router-info",
+                "object": "chat.completion.chunk",
+                "choices": [{"delta": {"content": preface}}]
+            }
+            yield f"data: {json.dumps(pre_chunk)}\n\n".encode("utf-8")
+
+            # Forward the original stream untouched
+            async for chunk in upstream.body_iterator:
+                yield chunk
+
+        # Preserve media type and headers (avoid content-length)
+        headers = dict(getattr(upstream, "headers", {}) or {})
+        headers.pop("content-length", None)
+        return StreamingResponse(
+            generator(),
+            media_type=getattr(upstream, "media_type", "text/event-stream"),
+            headers=headers
+        )
+
     class Pipe:
         """
         OpenWebUI Pipe that:
@@ -196,13 +226,23 @@ if OPENWEBUI:
             # 4) Route: rewrite target model and forward original request
             target_model = self.router.categories[category]["model"]
             body["model"] = target_model
+
             resp = await generate_chat_completion(__request__, body, user)
 
-            # 5) Append routed model info as italic Markdown with a divider line
-            if resp["choices"] and resp["choices"][0] and resp["choices"][0]["message"]:
-                resp["choices"][0]["message"]["content"] += f"\n\n---\n_(Routed to: {target_model})_"
-
-            return resp
+            # 5) Always show the preface at the TOP of the reply (streaming or not)
+            if isinstance(resp, StreamingResponse):
+                # Stream: inject preface as the first SSE chunk
+                return await _prepend_streamed_preface(resp, target_model)
+            else:
+                # Non-stream: prefix the assistant message content
+                try:
+                    msg = resp["choices"][0]["message"]
+                    original = msg.get("content") or ""
+                    preface = f"_(routing to: {target_model})_\n\n---\n\n"
+                    msg["content"] = preface + original
+                except Exception as e:
+                    print(f"[prompt-router] could not prepend preface: {e}")
+                return resp
 
 
 # =============================================================================

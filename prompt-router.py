@@ -1,55 +1,103 @@
-﻿import os, sys, json
+﻿"""
+title: Prompt Router Pipe
+author: sunborn23
+author_url: https://github.com/sunborn23
+repo_url: https://github.com/sunborn23/prompt-router
+version: 0.1
+"""
+
+import os
+import sys
+import json
 
 try:
-    # try OpenWebUI imports
+    # -------------------------------
+    # OpenWebUI runtime (Pipe mode)
+    # -------------------------------
     from pydantic import BaseModel, Field
     from fastapi import Request
     from open_webui.models.users import Users
     from open_webui.utils.chat import generate_chat_completion
     OPENWEBUI = True
 except ImportError:
-    # fallback to local imports
-    import boto3
+    # -------------------------------
+    # Local CLI runtime (no OpenWebUI)
+    # -------------------------------
+    import boto3  # Only needed locally
     OPENWEBUI = False
 
+
 class Router:
+    """
+    Core classification prompt builder and category registry.
+    OpenWebUI and CLI modes both use this class to keep logic DRY.
+    """
+
     def __init__(self):
-        # hardcoded categories + model mapping
+        # ---------------------------------------------------------------------
+        # Hardcoded categories + model mapping
+        # - Keep keys lowercase; the classifier is instructed to return only
+        #   the category *name*, which we normalize to lowercase in CLI mode.
+        # - Descriptions must stay concise, deterministic, and unambiguous so
+        #   a small classifier model (Nova Micro) can pick the right label.
+        # ---------------------------------------------------------------------
         self.categories = {
             "default": {
                 "model": "openai/gpt-4o-mini",
-                "description": "For everyday, relatively simple requests with short to medium length (1–3 paragraphs). Covers small talk, short explanations, summaries, or general questions that do not require deep reasoning."
+                "description": (
+                    "For everyday, relatively simple requests with short to medium length "
+                    "(1–3 paragraphs). Covers small talk, short explanations, summaries, or "
+                    "general questions that do not require deep reasoning."
+                ),
             },
             "coding": {
                 "model": "anthropic/claude-4-sonnet",
-                "description": "For technical requests related to programming, debugging, architecture, or IT tools. Includes code snippets, error messages, best practices, and in-depth technical explanations."
+                "description": (
+                    "For technical requests related to programming, debugging, architecture, "
+                    "or IT tools. Includes code snippets, error messages, best practices, and "
+                    "in-depth technical explanations."
+                ),
             },
             "deep-reasoning": {
                 "model": "openai/gpt-4o",
-                "description": "For complex, multi-layered tasks requiring high accuracy, creative solutions, or multimodality (e.g. images). Best suited for prompts with longer text (several paragraphs to full pages) or high logical complexity."
+                "description": (
+                    "For complex, multi-layered tasks requiring high accuracy, creative "
+                    "solutions, or multimodality (e.g. images). Best suited for prompts with "
+                    "longer text (several paragraphs to full pages) or high logical complexity."
+                ),
             },
             "structured-analysis": {
                 "model": "anthropic/claude-4-sonnet",
-                "description": "For tasks that need detailed, well-structured, text-heavy explanations. Useful for longer documents, strategic analyses, or conceptual requests requiring clarity and structure."
-            },
-            "content-generation": {
-                "model": "openai/gpt-4o",
-                "description": "For creative or business writing tasks such as blog posts, emails, marketing copy, or presentations. Focused on high-quality, coherent, and stylistically appropriate text generation."
+                "description": (
+                    "For tasks that need detailed, well-structured, text-heavy explanations. "
+                    "Useful for longer documents, strategic analyses, or conceptual requests "
+                    "requiring clarity and structure."
+                ),
             },
             "vision": {
                 "model": "mistral/pixtral-large-2502",
-                "description": "For requests involving images or visual content – such as image description, visual analysis, diagram interpretation, or multimodal tasks."
-            }
+                "description": (
+                    "For requests involving images or visual content – such as image "
+                    "description, visual analysis, diagram interpretation, or multimodal tasks."
+                ),
+            },
         }
 
     def build_classifier_prompt(self, user_prompt: str) -> str:
+        """
+        Build a strict classification prompt for Nova Micro.
+
+        Contract:
+        - Return only one of the known category names (lowercase).
+        - No extra text. No explanations.
+        """
         cat_desc = "\n".join(
             [f"- {name}: {cfg['description']}" for name, cfg in self.categories.items()]
         )
         return f"""
 You are a classification assistant.
 Your task is to read the user's prompt and assign it to exactly one category from the list below.
-Return only the category *name* as plain text. Do not explain your choice. Do not output anything else.
+Return only the category *name* as plain text in lowercase. Do not explain your choice. Do not output anything else.
 
 Categories:
 {cat_desc}
@@ -59,64 +107,101 @@ Categories:
 Example input:
 "Can you help me debug this Python error?"
 Example output:
-Coding
+coding
 
 ---
 
 Now classify the following user prompt:
 {user_prompt}
-"""
+""".strip()
 
 
-# -------------------
-# OpenWebUI pipe mode
-# -------------------
+# =============================================================================
+# OpenWebUI Pipe mode
+# =============================================================================
 if OPENWEBUI:
+
     class Pipe:
+        """
+        OpenWebUI Pipe that:
+        1) Calls a small classifier model (e.g., Nova Micro) to label the intent.
+        2) Rewrites the request body with the target model based on that label.
+        3) Forwards the original conversation to the chosen model.
+        """
+
         class Valves(BaseModel):
-            CLASSIFIER_MODEL_ID: str = Field("amazon.nova-micro-v1:0", description="Classifier model in OpenWebUI")
+            """
+            Admin-configurable knobs exposed in the WebUI.
+
+            - CLASSIFIER_MODEL_ID: which small/cheap model to use for the routing decision.
+              In OpenWebUI mode, credentials/providers are already configured centrally.
+            """
+            CLASSIFIER_MODEL_ID: str = Field(
+                default="eu.amazon.nova-micro-v1:0",
+                description="Classifier model used inside OpenWebUI for routing decisions.",
+            )
 
         def __init__(self):
             self.valves = self.Valves()
             self.router = Router()
 
         def pipes(self):
-            return [{
-                "id": "AUTO_ROUTER",
-                "name": "Auto-select model",
-                "description": "Automatically select the right model based on your prompt. Chooses between GPT-4o, GPT-4o-mini, Claude 4 and Pixtral Large.",
-                "pipe": self.pipe
-            }]
+            return [
+                {
+                    "id": "AUTO_ROUTER",
+                    "name": "Auto-select model",
+                    "description": (
+                        "Automatically select the right model based on your prompt. "
+                        "Chooses between GPT-4o, GPT-4o-mini, Claude 4 Sonnet and Pixtral Large."
+                    ),
+                    "pipe": self.pipe,
+                }
+            ]
 
         async def pipe(self, body: dict, __user__: dict, __request__: Request):
+            """
+            Main entry point for automatically routing a user prompt to the adequate model.
+            """
+            # Resolve OpenWebUI user
             user = Users.get_user_by_id(__user__["id"])
-            user_prompt = body["messages"][-1]["content"]
 
-            # Ask Nova Micro (via OpenWebUI generate_chat_completion)
+            # 1) Extract the user message content
+            user_prompt = body.get("messages", [{}])[-1].get("content", "")
+
+            # 2) Build classification call (OpenWebUI handles provider invocation)
             clf_body = {
                 "model": self.valves.CLASSIFIER_MODEL_ID,
                 "messages": [{"role": "user", "content": self.router.build_classifier_prompt(user_prompt)}],
-                "stream": False
+                "stream": False,
             }
+
             clf_resp = await generate_chat_completion(__request__, clf_body, user)
-            category = clf_resp.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            category_raw = clf_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+            category = (category_raw or "").strip().lower()
 
+            # 3) Fallback to "default" if unrecognized
             if category not in self.router.categories:
-                category = "Default"
+                category = "default"
 
+            # 4) Route: rewrite target model and forward original request
             body["model"] = self.router.categories[category]["model"]
             return await generate_chat_completion(__request__, body, user)
 
 
-# -------------------
+# =============================================================================
 # Local CLI test mode
-# -------------------
+# =============================================================================
 else:
     def classify_with_bedrock(router: Router, user_prompt: str) -> str:
-        MODEL_ID = "eu.amazon.nova-micro-v1:0"
+        """
+        Local classifier call using boto3 and Amazon Bedrock (Nova Micro), mainly used for testing.
+        """
+        MODEL_ID = os.getenv("BEDROCK_CLASSIFIER_MODEL_ID", "eu.amazon.nova-micro-v1:0")
         REGION = os.getenv("AWS_REGION", "eu-central-1")
+
         client = boto3.client("bedrock-runtime", region_name=REGION)
 
+        # Nova (Messages API) request body
         body = {
             "messages": [
                 {
@@ -126,6 +211,7 @@ else:
             ],
             "inferenceConfig": {"maxTokens": 50, "temperature": 0.0, "topP": 1.0},
         }
+
         resp = client.invoke_model(
             modelId=MODEL_ID,
             body=json.dumps(body),
@@ -133,32 +219,43 @@ else:
             contentType="application/json",
         )
         result = json.loads(resp["body"].read())
-        # Nova Messages response shape
+
+        # Try Messages output first; fall back to legacy key if present.
         try:
-            return (
-                result["output"]["message"]["content"][0]["text"]
-                .strip()
-            )
+            return result["output"]["message"]["content"][0]["text"].strip().lower()
         except Exception:
-            # Fallback for any alternate shape
-            return result.get("outputText", "").strip()
+            return (result.get("outputText", "") or "").strip().lower()
 
     def main():
+        """
+        Simple REPL for local testing:
+        - Runs the same classifier prompt locally against Bedrock Nova Micro.
+        - Prints the resolved category and mapped target model.
+        """
         router = Router()
-        print("=== Local Router Test ===")
+        print("=== Local Router Test (Bedrock Nova Micro) ===")
+        print(f"Region: {os.getenv('AWS_REGION', 'eu-central-1')}")
+        print(f"Model : {os.getenv('BEDROCK_CLASSIFIER_MODEL_ID', 'eu.amazon.nova-micro-v1:0')}")
+        print("Type 'exit' or 'quit' to leave.\n")
+
         while True:
             try:
                 prompt = input("Prompt> ")
-                if prompt.lower() in ["exit", "quit"]:
+                if prompt.strip().lower() in ("exit", "quit"):
                     break
-                category_raw = classify_with_bedrock(router, prompt)
-                category = (category_raw or "").strip().lower()
+
+                category = classify_with_bedrock(router, prompt)
                 if category not in router.categories:
                     category = "default"
-                print(f"Category: {category}")
-                print(f"→ Target model: {router.categories[category]['model']}\n")
+
+                print(f"Category     : {category}")
+                print(f"Target model : {router.categories[category]['model']}\n")
+
             except KeyboardInterrupt:
+                print("\nExiting.")
                 sys.exit(0)
+            except Exception as e:
+                print("Error:", e)
 
     if __name__ == "__main__":
         main()

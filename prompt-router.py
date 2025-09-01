@@ -192,7 +192,9 @@ if OPENWEBUI:
                 "stream": False,
             }
 
-        def _parse_classifier_label(self, response: Dict[str, Any]) -> str:
+        def _parse_classifier_label(self, response: Any) -> str:
+            if not isinstance(response, dict):
+                response = json.loads(response.body)
             return response["choices"][0]["message"]["content"]  # type: ignore[index]
 
     def pipes() -> list[dict[str, object]]:

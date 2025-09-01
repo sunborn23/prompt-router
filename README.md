@@ -51,7 +51,7 @@ Check the Valves values to configure the router. Available options include:
 - `MODEL_STRUCT` – model ID for structured analysis.
 - `MODEL_CONTENT` – model ID for content generation.
 - `MODEL_VISION` – model ID for vision/multimodal prompts.
-- `PREFACE_ENABLED` – toggle to include or omit the routing prefaces.
+- `ROUTING_STATUS_ENABLED` – toggle to include or omit routing status events.
 
 ## Logging
 
@@ -106,16 +106,14 @@ Windows PowerShell:
 
 ## Manual test steps
 
-- Non-stream test and verify preface renders correctly (no Markdown heading).
-- Stream test and verify preface chunk arrives first.
-- Run each category once using the sample prompts:
+- Run each category once using the sample prompts and ensure no errors occur:
   - default: "What is the capital of France?"
   - coding: "Why does `len(5)` raise a TypeError in Python?"
   - deep-reasoning: "How would you plan a mission to Mars using current technology?"
   - structured-analysis: "Generate a structured report summarizing last quarter's sales trends with sections for key metrics, regional performance, and recommendations."
   - content-generation: "Write a short email requesting vacation time."
   - vision: attach an image and ask, "What is happening in this picture?"
-- Unknown category → error.
+- Verify that a status message like `Detected prompt category "coding", routing to "anthropic/claude-4-sonnet"` shows the detected category and chosen model.
 
 ## License
 

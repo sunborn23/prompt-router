@@ -106,8 +106,14 @@ Windows PowerShell:
 
 ## Manual test steps
 
+- Run each category once using the sample prompts and ensure no errors occur:
+  - default: "What is the capital of France?"
+  - coding: "Why does `len(5)` raise a TypeError in Python?"
+  - deep-reasoning: "How would you plan a mission to Mars using current technology?"
+  - structured-analysis: "Generate a structured report summarizing last quarter's sales trends with sections for key metrics, regional performance, and recommendations."
+  - content-generation: "Write a short email requesting vacation time."
+  - vision: attach an image and ask, "What is happening in this picture?"
 - Verify that a status message like `Detected prompt category "coding", routing to "anthropic/claude-4-sonnet"` shows the detected category and chosen model.
-- Unknown category → error.
 
 ## License
 

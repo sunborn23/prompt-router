@@ -138,11 +138,11 @@ if OPENWEBUI:
             self.router = CategoryRouter(self.valves.model_dump())
 
         async def pipe(
-            self,
-            body: Dict[str, Any],
-            __user__: Dict[str, Any],
-            __request__: Request,
-            __event_emitter__=None,
+                self,
+                body: Dict[str, Any],
+                __user__: Dict[str, Any],
+                __request__: Request,
+                __event_emitter__=None,
         ):
             """Route the prompt to a model chosen by a classifier."""
 
@@ -197,6 +197,7 @@ if OPENWEBUI:
                 response = json.loads(response.body)
             return response["choices"][0]["message"]["content"]  # type: ignore[index]
 
+
     def pipes() -> list[dict[str, object]]:
         return [
             {
@@ -217,7 +218,7 @@ if OPENWEBUI:
 
 
 def build_classifier_messages(
-    user_prompt: str, categories: Dict[str, Dict[str, str]]
+        user_prompt: str, categories: Dict[str, Dict[str, str]]
 ) -> list[Dict[str, str]]:
     descriptions = "\n".join(
         f"- {name}: {cfg['description']}" for name, cfg in categories.items()
@@ -231,16 +232,47 @@ def build_classifier_messages(
         f"Valid categories: {valid_labels}\n\n"
         f"Categories:\n{descriptions}"
     )
-    assistant = (
-        "Example user prompt:\nCan you help me debug this Python error?\n"
-        "Expected category:\ncoding"
-    )
     user = f"Classify the following user prompt:\n{user_prompt}"
     return [
         {"role": "system", "content": system},
-        {"role": "assistant", "content": assistant},
         {"role": "user", "content": user},
     ]
+
+
+def build_bedrock_body(router_messages: list[Dict[str, str]],
+                       max_tokens: int = 6,
+                       temperature: float = 0.0,
+                       top_p: float = 0.0) -> Dict[str, Any]:
+    system_chunks: list[str] = []
+    converted: list[Dict[str, Any]] = []
+
+    for msg in router_messages:
+        role = str(msg.get("role", "")).strip()
+        content = str(msg.get("content", ""))
+
+        if role == "system":
+            if content:
+                system_chunks.append(content)
+            continue
+
+        if role == "user":
+            converted.append({
+                "role": "user",
+                "content": [{"text": content}]
+            })
+
+    body: Dict[str, Any] = {
+        "messages": converted,
+        "inferenceConfig": {
+            "maxTokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
+        },
+    }
+    if system_chunks:
+        body["system"] = [{"text": "\n\n".join(system_chunks)}]
+
+    return body
 
 
 # ---------------------------------------------------------------------------
@@ -257,12 +289,17 @@ if not OPENWEBUI:
         region = os.getenv("AWS_REGION", "eu-central-1")
         client = boto3.client("bedrock-runtime", region_name=region)
 
-        messages = [
-            {"role": m["role"], "content": [{"text": m["content"]}]}
-            for m in router.classifier_messages(user_prompt)
-        ]
+        # Hardcodiertes Mapping: Wir erwarten zwei Messages in fester Reihenfolge
+        # 0: system, 1: user
+        msgs = router.classifier_messages(user_prompt)
+        system_msg = str(msgs[0]["content"])
+        user_msg = str(msgs[1]["content"])
+
         body = {
-            "messages": messages,
+            "system": [{"text": system_msg}],
+            "messages": [
+                {"role": "user", "content": [{"text": user_msg}]},
+            ],
             "inferenceConfig": {"maxTokens": 6, "temperature": 0.0, "topP": 0.0},
         }
 
@@ -274,6 +311,7 @@ if not OPENWEBUI:
         )
         result = json.loads(resp["body"].read())
         return result["output"]["message"]["content"][0]["text"].strip().lower()
+
 
     def main() -> None:
         router = CategoryRouter({})
@@ -298,6 +336,7 @@ if not OPENWEBUI:
             model_id = router.model_for(category)
             print(f"Category     : {category}")
             print(f"Target model : {model_id}\n")
+
 
     if __name__ == "__main__":
         main()

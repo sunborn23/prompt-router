@@ -6,6 +6,7 @@ repo_url: https://github.com/sunborn23/prompt-router
 version: 0.5
 """
 
+import inspect
 import json
 import logging
 import os
@@ -282,7 +283,11 @@ def wrap_stream_with_preface(
             async for part in upstream.body_iterator:
                 yield part
         finally:
-            await upstream.close()
+            close = getattr(upstream, "close", None)
+            if callable(close):
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
 
     headers = dict(getattr(upstream, "headers", {}) or {})
     headers.pop("content-length", None)

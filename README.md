@@ -95,10 +95,10 @@ Windows PowerShell:
 
 ## Notes
 
-- The router defaults to `default` if the classification result does not match one of the known categories.
+- The router assumes the classifier returns a valid category; unknown categories raise an error.
 - In OpenWebUI mode, Bedrock is called via the integrated `generate_chat_completion`.
 - In CLI mode, Bedrock is accessed directly via `boto3`.
-- When a model request fails, the router falls back to the default model and adds `(Routing error. If this happens repeatedly, please report it. Falling back to {model}.)` before the answer.
+- If a model request fails, the router returns an error so you can manually select a model.
 
 ## License
 

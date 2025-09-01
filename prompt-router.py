@@ -3,7 +3,7 @@ title: Prompt Router Pipe
 author: sunborn23
 author_url: https://github.com/sunborn23
 repo_url: https://github.com/sunborn23/prompt-router
-version: 1.0
+version: 0.4
 """
 
 import json
@@ -62,22 +62,6 @@ def build_preface(category: str, model_id: str) -> str:
     """Return the markdown preface for routing information."""
 
     return f"_(detected {category} prompt, routing to {model_id})_\n\n---\n\n"
-
-
-def build_fallback_preface(model_id: str) -> str:
-    """Return the markdown preface for routing fallback information."""
-
-    return (
-        "_(Routing error. If this happens repeatedly, please report it. "
-        f"Falling back to {model_id}.)_\n\n---\n\n"
-    )
-
-
-def choose_category_or_default(raw_label: str, categories: Dict[str, Any]) -> str:
-    """Normalize the classifier label or fall back to ``default``."""
-
-    label = (raw_label or "").strip().lower()
-    return label if label in categories else "default"
 
 
 def wrap_stream_with_preface(
@@ -166,7 +150,7 @@ class CategoryRouter:
         return build_classifier_prompt(user_prompt, self.categories)
 
     def model_for(self, category: str) -> str:
-        return self.categories.get(category, self.categories["default"])["model"]
+        return self.categories[category]["model"]
 
 
 # ---------------------------------------------------------------------------
@@ -224,55 +208,22 @@ if OPENWEBUI:
             prompt = self._extract_last_user_message(body)
             classifier_request = self._build_classifier_request(prompt)
 
-            try:
-                clf_response = await generate_chat_completion(
-                    __request__, classifier_request, user
-                )
-                raw_label = self._parse_classifier_label(clf_response)
-            except Exception as exc:  # classifier failure
-                logger.exception("Classifier request failed: %s", exc)
-                raw_label = ""
+            clf_response = await generate_chat_completion(
+                __request__, classifier_request, user
+            )
+            raw_label = self._parse_classifier_label(clf_response)
 
-            category = choose_category_or_default(raw_label, self.router.categories)
+            category = raw_label.strip().lower()
             model_id = self.router.model_for(category)
             logger.info("Routing category '%s' to model '%s'", category, model_id)
 
             body["model"] = model_id
-            routing_error = False
-            try:
-                response = await generate_chat_completion(__request__, body, user)
-            except Exception as exc:
-                logger.exception(
-                    "Request to model '%s' failed; falling back to default: %s",
-                    model_id,
-                    exc,
-                )
-                if model_id != self.valves.MODEL_DEFAULT:
-                    routing_error = True
-                    body["model"] = self.valves.MODEL_DEFAULT
-                    model_id = self.valves.MODEL_DEFAULT
-                    try:
-                        response = await generate_chat_completion(
-                            __request__, body, user
-                        )
-                    except Exception as inner_exc:
-                        logger.exception(
-                            "Fallback to default model '%s' also failed: %s",
-                            self.valves.MODEL_DEFAULT,
-                            inner_exc,
-                        )
-                        return {"error": "All model requests failed."}
-                else:
-                    return {"error": "Model request failed."}
+            response = await generate_chat_completion(__request__, body, user)
 
-            preface = ""
-            if self.valves.PREFACE_ENABLED:
-                preface += build_preface(category, model_id)
-            if routing_error:
-                preface += build_fallback_preface(model_id)
-            if not preface:
+            if not self.valves.PREFACE_ENABLED:
                 return response
 
+            preface = build_preface(category, model_id)
             if isinstance(response, StreamingResponse):
                 return wrap_stream_with_preface(response, preface)
 
@@ -300,25 +251,15 @@ if OPENWEBUI:
             }
 
         def _parse_classifier_label(self, response: Dict[str, Any]) -> str:
-            try:
-                return response["choices"][0]["message"]["content"]  # type: ignore[index]
-            except Exception:
-                return ""
+            return response["choices"][0]["message"]["content"]  # type: ignore[index]
 
         def _prepend_non_streaming_preface(
             self, resp: Dict[str, Any], preface: str
         ) -> None:
-            try:
-                choices = resp.get("choices")
-                if not isinstance(choices, list) or not choices:
-                    return
-                message = (choices[0] or {}).get("message")
-                if not isinstance(message, dict):
-                    return
-                content = message.get("content", "")
-                message["content"] = preface + str(content)
-            except Exception:
-                pass
+            choices = resp["choices"]
+            message = choices[0]["message"]
+            content = message.get("content", "")
+            message["content"] = preface + str(content)
 
     # ---------------------------------------------------------------------------
     def pipes() -> list[dict[str, object]]:
@@ -366,10 +307,7 @@ else:
             contentType="application/json",
         )
         result = json.loads(resp["body"].read())
-        try:
-            return result["output"]["message"]["content"][0]["text"].strip().lower()
-        except Exception:
-            return (result.get("outputText", "") or "").strip().lower()
+        return result["output"]["message"]["content"][0]["text"].strip().lower()
 
     def main() -> None:
         router = CategoryRouter({})
@@ -383,19 +321,17 @@ else:
         while True:
             try:
                 prompt = input("Prompt> ")
-                if prompt.strip().lower() in {"exit", "quit"}:
-                    break
-
-                raw = classify_with_bedrock(router, prompt)
-                category = choose_category_or_default(raw, router.categories)
-                model_id = router.model_for(category)
-                print(f"Category     : {category}")
-                print(f"Target model : {model_id}\n")
             except KeyboardInterrupt:
                 print("\nExiting.")
                 sys.exit(0)
-            except Exception as exc:
-                print("Error:", exc)
+            if prompt.strip().lower() in {"exit", "quit"}:
+                break
+
+            raw = classify_with_bedrock(router, prompt)
+            category = raw.strip().lower()
+            model_id = router.model_for(category)
+            print(f"Category     : {category}")
+            print(f"Target model : {model_id}\n")
 
     if __name__ == "__main__":
         main()
@@ -404,5 +340,4 @@ else:
 # Manual test steps:
 # - Non-stream test and verify preface renders correctly (no Markdown heading).
 # - Stream test and verify preface chunk arrives first.
-# - Unknown category → default model.
-# - Broken model ID → fallback to default model once, then graceful error.
+# - Unknown category → error.

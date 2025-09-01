@@ -224,12 +224,15 @@ def build_classifier_prompt(
     descriptions = "\n".join(
         f"- {name}: {cfg['description']}" for name, cfg in categories.items()
     )
+    valid_labels = ", ".join(categories.keys())
     return (
-        "You are a classification assistant.\n"
-        "Your task is to read the user's prompt and assign it to exactly one "
-        "category from the list below.\n"
-        "Return only the category name in lowercase without explanations or "
-        "additional text.\n\n"
+        "You are a strict classification assistant.\n"
+        "Analyse the user's prompt and choose exactly one category.\n"
+        f"Valid categories: {valid_labels}.\n"
+        "Respond with the category name only, in lowercase. THIS IS CRUCIAL: "
+        "the output must be exactly one valid category and nothing else. Do not "
+        "add explanations, punctuation, symbols, quotes or any other words. Any "
+        "extra text will break the system.\n\n"
         f"Categories:\n{descriptions}\n\n---\n\n"
         "Example input:\n"
         "Can you help me debug this Python error?\n"

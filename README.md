@@ -100,6 +100,12 @@ Windows PowerShell:
 - In CLI mode, Bedrock is accessed directly via `boto3`.
 - If a model request fails, the router returns an error so you can manually select a model.
 
+## Manual test steps
+
+- Non-stream test and verify preface renders correctly (no Markdown heading).
+- Stream test and verify preface chunk arrives first.
+- Unknown category → error.
+
 ## License
 
 see LICENSE file

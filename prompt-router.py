@@ -85,8 +85,8 @@ class CategoryRouter:
             },
         }
 
-    def classifier_prompt(self, user_prompt: str) -> str:
-        return build_classifier_prompt(user_prompt, self.categories)
+    def classifier_messages(self, user_prompt: str) -> list[Dict[str, str]]:
+        return build_classifier_messages(user_prompt, self.categories)
 
     def model_for(self, category: str) -> str:
         return self.categories[category]["model"]
@@ -188,9 +188,7 @@ if OPENWEBUI:
         def _build_classifier_request(self, prompt: str) -> Dict[str, Any]:
             return {
                 "model": self.valves.CLASSIFIER_MODEL_ID,
-                "messages": [
-                    {"role": "user", "content": self.router.classifier_prompt(prompt)}
-                ],
+                "messages": self.router.classifier_messages(prompt),
                 "stream": False,
             }
 
@@ -216,31 +214,31 @@ if OPENWEBUI:
 # ---------------------------------------------------------------------------
 
 
-def build_classifier_prompt(
+def build_classifier_messages(
     user_prompt: str, categories: Dict[str, Dict[str, str]]
-) -> str:
-    """Create a deterministic classification prompt for Nova Micro."""
-
+) -> list[Dict[str, str]]:
     descriptions = "\n".join(
         f"- {name}: {cfg['description']}" for name, cfg in categories.items()
     )
     valid_labels = ", ".join(categories.keys())
-    return (
-        "You are a strict classification assistant.\n"
-        "Analyse the user's prompt and choose exactly one category.\n"
-        f"Valid categories: {valid_labels}.\n"
-        "Respond with the category name only, in lowercase. THIS IS CRUCIAL: "
-        "the output must be exactly one valid category and nothing else. Do not "
-        "add explanations, punctuation, symbols, quotes or any other words. Any "
-        "extra text will break the system.\n\n"
-        f"Categories:\n{descriptions}\n\n---\n\n"
-        "Example input:\n"
-        "Can you help me debug this Python error?\n"
-        "Example output:\n"
-        "coding\n\n---\n\n"
-        "Now classify the following user prompt:\n"
-        f"{user_prompt}"
+    system = (
+        "You are a strict classification assistant. "
+        "Choose EXACTLY ONE category from the allowed list. "
+        "Return ONLY the category token in lowercase, without punctuation, "
+        "quotes or explanation. If uncertain, return 'default'.\n\n"
+        f"Valid categories: {valid_labels}\n\n"
+        f"Categories:\n{descriptions}"
     )
+    assistant = (
+        "Example user prompt:\nCan you help me debug this Python error?\n"
+        "Expected category:\ncoding"
+    )
+    user = f"Classify the following user prompt:\n{user_prompt}"
+    return [
+        {"role": "system", "content": system},
+        {"role": "assistant", "content": assistant},
+        {"role": "user", "content": user},
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -257,14 +255,13 @@ if not OPENWEBUI:
         region = os.getenv("AWS_REGION", "eu-central-1")
         client = boto3.client("bedrock-runtime", region_name=region)
 
+        messages = [
+            {"role": m["role"], "content": [{"text": m["content"]}]}
+            for m in router.classifier_messages(user_prompt)
+        ]
         body = {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"text": router.classifier_prompt(user_prompt)}],
-                }
-            ],
-            "inferenceConfig": {"maxTokens": 50, "temperature": 0.0, "topP": 1.0},
+            "messages": messages,
+            "inferenceConfig": {"maxTokens": 6, "temperature": 0.0, "topP": 0.0},
         }
 
         resp = client.invoke_model(

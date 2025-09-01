@@ -172,7 +172,7 @@ if OPENWEBUI:
                 )
 
             body["model"] = model_id
-            return generate_chat_completion(__request__, body, user)
+            return await generate_chat_completion(__request__, body, user)
 
         # ------------------------------------------------------------------
         # Helpers

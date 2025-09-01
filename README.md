@@ -99,6 +99,13 @@ Windows PowerShell:
 - In CLI mode, Bedrock is accessed directly via `boto3`.
 - If a model request fails, the router returns an error so you can manually select a model.
 
+## Automated tests
+
+Install test dependencies and run:
+
+    pip install -r requirements.txt pytest pytest-asyncio
+    pytest
+
 ## Manual test steps
 
 - Run each category once using the sample prompts and ensure no errors occur:

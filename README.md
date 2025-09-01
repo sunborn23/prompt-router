@@ -106,7 +106,7 @@ Windows PowerShell:
 
 ## Manual test steps
 
-- Verify that a status message shows the detected category and chosen model.
+- Verify that a status message like `Detected prompt category "coding", routing to "anthropic/claude-4-sonnet"` shows the detected category and chosen model.
 - Unknown category → error.
 
 ## License

@@ -174,7 +174,7 @@ if OPENWEBUI:
                     {
                         "type": "status",
                         "data": {
-                            "description": f"🔎 Detected prompt category **{category}**, routing to **{model_id}**",
+                            "description": f'Detected prompt category "{category}", routing to "{model_id}"',
                             "done": True,
                             "hidden": False,
                         },

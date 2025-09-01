@@ -283,7 +283,12 @@ def wrap_stream_with_preface(
 
     headers = dict(getattr(upstream, "headers", {}) or {})
     headers.pop("content-length", None)
-    return StreamingResponse(stream(), media_type=upstream.media_type, headers=headers)
+    return StreamingResponse(
+        stream(),
+        media_type=upstream.media_type,
+        headers=headers,
+        background=getattr(upstream, "background", None),
+    )
 
 
 # ---------------------------------------------------------------------------

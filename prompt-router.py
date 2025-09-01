@@ -26,7 +26,9 @@ except ImportError:  # Local CLI runtime
     OPENWEBUI = False
 
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 # ---------------------------------------------------------------------------
@@ -159,10 +161,19 @@ if OPENWEBUI:
 
             category = raw_label.strip().lower()
             model_id = self.router.model_for(category)
-            logger.info("Routing category '%s' to model '%s'", category, model_id)
+            logger.info(
+                "Detected category '%s'; requesting model '%s'", category, model_id
+            )
 
             body["model"] = model_id
             response = await generate_chat_completion(__request__, body, user)
+
+            actual_model = model_id
+            if isinstance(response, StreamingResponse):
+                actual_model = response.headers.get("x-model", model_id)
+            else:
+                actual_model = response.get("model", model_id)
+            logger.info("Response returned from model '%s'", actual_model)
 
             if not self.valves.PREFACE_ENABLED:
                 return response

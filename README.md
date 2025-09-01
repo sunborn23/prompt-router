@@ -53,6 +53,10 @@ Check the Valves values to configure the router. Available options include:
 - `MODEL_VISION` – model ID for vision/multimodal prompts.
 - `PREFACE_ENABLED` – toggle to include or omit the routing prefaces.
 
+## Logging
+
+The router logs the detected category, the requested model, and the model reported in the response at the INFO level.
+
 ---
 
 ## Local CLI Test with AWS Bedrock

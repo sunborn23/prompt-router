@@ -3,11 +3,10 @@ title: Prompt Router Pipe
 author: sunborn23
 author_url: https://github.com/sunborn23
 repo_url: https://github.com/sunborn23/prompt-router
-version: 0.5
+version: 1.0
 """
 
 import json
-import logging
 import os
 import sys
 from typing import Any, Dict
@@ -17,18 +16,12 @@ try:  # OpenWebUI runtime (Pipe mode)
     from open_webui.models.users import Users
     from open_webui.utils.chat import generate_chat_completion
     from pydantic import BaseModel, Field
-    from starlette.responses import StreamingResponse
 
     OPENWEBUI = True
 except ImportError:  # Local CLI runtime
     import boto3
 
     OPENWEBUI = False
-
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 # ---------------------------------------------------------------------------
@@ -165,9 +158,6 @@ if OPENWEBUI:
 
             category = raw_label.strip().lower()
             model_id = self.router.model_for(category)
-            logger.info(
-                "Detected category '%s'; requesting model '%s'", category, model_id
-            )
 
             if self.valves.ROUTING_STATUS_ENABLED and __event_emitter__:
                 await __event_emitter__(
@@ -182,15 +172,7 @@ if OPENWEBUI:
                 )
 
             body["model"] = model_id
-            response = await generate_chat_completion(__request__, body, user)
-
-            actual_model = model_id
-            if isinstance(response, StreamingResponse):
-                actual_model = response.headers.get("x-model", model_id)
-            else:
-                actual_model = response.get("model", model_id)
-            logger.info("Response returned from model '%s'", actual_model)
-            return response
+            return generate_chat_completion(__request__, body, user)
 
         # ------------------------------------------------------------------
         # Helpers

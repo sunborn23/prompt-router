@@ -52,11 +52,6 @@ Check the Valves values to configure the router. Available options include:
 - `MODEL_CONTENT` – model ID for content generation.
 - `MODEL_VISION` – model ID for vision/multimodal prompts.
 - `ROUTING_STATUS_ENABLED` – toggle to include or omit routing status events.
-
-## Logging
-
-The router logs the detected category, the requested model, and the model reported in the response at the INFO level.
-
 ---
 
 ## Local CLI Test with AWS Bedrock

@@ -3,7 +3,7 @@ title: Prompt Router Pipe
 author: sunborn23
 author_url: https://github.com/sunborn23
 repo_url: https://github.com/sunborn23/prompt-router
-version: 0.4
+version: 0.5
 """
 
 import json
@@ -271,15 +271,18 @@ def wrap_stream_with_preface(
     """Prepend a preface chunk to a streaming response."""
 
     async def stream() -> AsyncIterator[bytes]:
-        chunk = {
-            "id": "router-preface",
-            "object": "chat.completion.chunk",
-            "choices": [{"delta": {"content": preface_text}}],
-        }
-        yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+        try:
+            chunk = {
+                "id": "router-preface",
+                "object": "chat.completion.chunk",
+                "choices": [{"delta": {"content": preface_text}}],
+            }
+            yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
 
-        async for part in upstream.body_iterator:
-            yield part
+            async for part in upstream.body_iterator:
+                yield part
+        finally:
+            await upstream.close()
 
     headers = dict(getattr(upstream, "headers", {}) or {})
     headers.pop("content-length", None)

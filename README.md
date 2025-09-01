@@ -108,6 +108,13 @@ Windows PowerShell:
 
 - Non-stream test and verify preface renders correctly (no Markdown heading).
 - Stream test and verify preface chunk arrives first.
+- Run each category once using the sample prompts:
+  - default: "What is the capital of France?"
+  - coding: "Why does `len(5)` raise a TypeError in Python?"
+  - deep-reasoning: "How would you plan a mission to Mars using current technology?"
+  - structured-analysis: "Compare the economic policies of 2020 and 2024."
+  - content-generation: "Write a short email requesting vacation time."
+  - vision: attach an image and ask, "What is happening in this picture?"
 - Unknown category → error.
 
 ## License

@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, AsyncIterator, Dict
+from typing import Any, Dict
 
 try:  # OpenWebUI runtime (Pipe mode)
     from fastapi import Request
@@ -136,8 +136,8 @@ if OPENWEBUI:
                 "eu.mistral.pixtral-large-2502-v1:0",
                 description="Model ID for vision / multimodal prompts",
             )
-            PREFACE_ENABLED: bool = Field(
-                True, description="If false, routing preface will be omitted."
+            ROUTING_STATUS_ENABLED: bool = Field(
+                True, description="If false, routing status events will be omitted."
             )
 
         def __init__(self) -> None:
@@ -145,7 +145,11 @@ if OPENWEBUI:
             self.router = CategoryRouter(self.valves.model_dump())
 
         async def pipe(
-            self, body: Dict[str, Any], __user__: Dict[str, Any], __request__: Request
+            self,
+            body: Dict[str, Any],
+            __user__: Dict[str, Any],
+            __request__: Request,
+            __event_emitter__=None,
         ):
             """Route the prompt to a model chosen by a classifier."""
 
@@ -165,6 +169,18 @@ if OPENWEBUI:
                 "Detected category '%s'; requesting model '%s'", category, model_id
             )
 
+            if self.valves.ROUTING_STATUS_ENABLED and __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": f"🔎 Detected prompt category **{category}**, routing to **{model_id}**",
+                            "done": True,
+                            "hidden": False,
+                        },
+                    }
+                )
+
             body["model"] = model_id
             response = await generate_chat_completion(__request__, body, user)
 
@@ -174,15 +190,6 @@ if OPENWEBUI:
             else:
                 actual_model = response.get("model", model_id)
             logger.info("Response returned from model '%s'", actual_model)
-
-            if not self.valves.PREFACE_ENABLED:
-                return response
-
-            preface = build_preface(category, model_id)
-            if isinstance(response, StreamingResponse):
-                return wrap_stream_with_preface(response, preface)
-
-            self._prepend_non_streaming_preface(response, preface)
             return response
 
         # ------------------------------------------------------------------
@@ -207,14 +214,6 @@ if OPENWEBUI:
 
         def _parse_classifier_label(self, response: Dict[str, Any]) -> str:
             return response["choices"][0]["message"]["content"]  # type: ignore[index]
-
-        def _prepend_non_streaming_preface(
-            self, resp: Dict[str, Any], preface: str
-        ) -> None:
-            choices = resp["choices"]
-            message = choices[0]["message"]
-            content = message.get("content", "")
-            message["content"] = preface + str(content)
 
     def pipes() -> list[dict[str, object]]:
         return [
@@ -257,36 +256,6 @@ def build_classifier_prompt(
         "Now classify the following user prompt:\n"
         f"{user_prompt}"
     )
-
-
-def build_preface(category: str, model_id: str) -> str:
-    """Return the markdown preface for routing information."""
-
-    return f"_(detected {category} prompt, routing to {model_id})_\n\n---\n\n"
-
-
-def wrap_stream_with_preface(
-    upstream: StreamingResponse, preface_text: str
-) -> StreamingResponse:
-    """Prepend a preface chunk to a streaming response."""
-
-    async def stream() -> AsyncIterator[bytes]:
-        try:
-            chunk = {
-                "id": "router-preface",
-                "object": "chat.completion.chunk",
-                "choices": [{"delta": {"content": preface_text}}],
-            }
-            yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
-
-            async for part in upstream.body_iterator:
-                yield part
-        finally:
-            await upstream.close()
-
-    headers = dict(getattr(upstream, "headers", {}) or {})
-    headers.pop("content-length", None)
-    return StreamingResponse(stream(), media_type=upstream.media_type, headers=headers)
 
 
 # ---------------------------------------------------------------------------

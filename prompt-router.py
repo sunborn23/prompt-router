@@ -16,7 +16,6 @@ try:  # OpenWebUI runtime (Pipe mode)
     from open_webui.models.users import Users
     from open_webui.utils.chat import generate_chat_completion
     from pydantic import BaseModel, Field
-    from starlette.responses import StreamingResponse
 
     OPENWEBUI = True
 except ImportError:  # Local CLI runtime
@@ -173,14 +172,7 @@ if OPENWEBUI:
                 )
 
             body["model"] = model_id
-            response = await generate_chat_completion(__request__, body, user)
-
-            actual_model = model_id
-            if isinstance(response, StreamingResponse):
-                actual_model = response.headers.get("x-model", model_id)
-            else:
-                actual_model = response.get("model", model_id)
-            return response
+            return generate_chat_completion(__request__, body, user)
 
         # ------------------------------------------------------------------
         # Helpers

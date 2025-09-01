@@ -103,7 +103,7 @@ Windows PowerShell:
 
 Install test dependencies and run:
 
-    pip install -r requirements.txt pytest pytest-asyncio
+    pip install -r requirements.txt -r test-requirements.txt
     pytest
 
 ## Manual test steps

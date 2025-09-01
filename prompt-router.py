@@ -30,62 +30,6 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
-
-
-def build_classifier_prompt(
-    user_prompt: str, categories: Dict[str, Dict[str, str]]
-) -> str:
-    """Create a deterministic classification prompt for Nova Micro."""
-
-    descriptions = "\n".join(
-        f"- {name}: {cfg['description']}" for name, cfg in categories.items()
-    )
-    return (
-        "You are a classification assistant.\n"
-        "Your task is to read the user's prompt and assign it to exactly one "
-        "category from the list below.\n"
-        "Return only the category name in lowercase without explanations or "
-        "additional text.\n\n"
-        f"Categories:\n{descriptions}\n\n---\n\n"
-        "Example input:\n"
-        "Can you help me debug this Python error?\n"
-        "Example output:\n"
-        "coding\n\n---\n\n"
-        "Now classify the following user prompt:\n"
-        f"{user_prompt}"
-    )
-
-
-def build_preface(category: str, model_id: str) -> str:
-    """Return the markdown preface for routing information."""
-
-    return f"_(detected {category} prompt, routing to {model_id})_\n\n---\n\n"
-
-
-def wrap_stream_with_preface(
-    upstream: StreamingResponse, preface_text: str
-) -> StreamingResponse:
-    """Prepend a preface chunk to a streaming response."""
-
-    async def stream() -> AsyncIterator[bytes]:
-        chunk = {
-            "id": "router-preface",
-            "object": "chat.completion.chunk",
-            "choices": [{"delta": {"content": preface_text}}],
-        }
-        yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
-
-        async for part in upstream.body_iterator:
-            yield part
-
-    headers = dict(getattr(upstream, "headers", {}) or {})
-    headers.pop("content-length", None)
-    return StreamingResponse(stream(), media_type=upstream.media_type, headers=headers)
-
-
-# ---------------------------------------------------------------------------
 # Core router
 # ---------------------------------------------------------------------------
 
@@ -261,7 +205,6 @@ if OPENWEBUI:
             content = message.get("content", "")
             message["content"] = preface + str(content)
 
-    # ---------------------------------------------------------------------------
     def pipes() -> list[dict[str, object]]:
         return [
             {
@@ -277,11 +220,67 @@ if OPENWEBUI:
 
 
 # ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+
+def build_classifier_prompt(
+    user_prompt: str, categories: Dict[str, Dict[str, str]]
+) -> str:
+    """Create a deterministic classification prompt for Nova Micro."""
+
+    descriptions = "\n".join(
+        f"- {name}: {cfg['description']}" for name, cfg in categories.items()
+    )
+    return (
+        "You are a classification assistant.\n"
+        "Your task is to read the user's prompt and assign it to exactly one "
+        "category from the list below.\n"
+        "Return only the category name in lowercase without explanations or "
+        "additional text.\n\n"
+        f"Categories:\n{descriptions}\n\n---\n\n"
+        "Example input:\n"
+        "Can you help me debug this Python error?\n"
+        "Example output:\n"
+        "coding\n\n---\n\n"
+        "Now classify the following user prompt:\n"
+        f"{user_prompt}"
+    )
+
+
+def build_preface(category: str, model_id: str) -> str:
+    """Return the markdown preface for routing information."""
+
+    return f"_(detected {category} prompt, routing to {model_id})_\n\n---\n\n"
+
+
+def wrap_stream_with_preface(
+    upstream: StreamingResponse, preface_text: str
+) -> StreamingResponse:
+    """Prepend a preface chunk to a streaming response."""
+
+    async def stream() -> AsyncIterator[bytes]:
+        chunk = {
+            "id": "router-preface",
+            "object": "chat.completion.chunk",
+            "choices": [{"delta": {"content": preface_text}}],
+        }
+        yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+
+        async for part in upstream.body_iterator:
+            yield part
+
+    headers = dict(getattr(upstream, "headers", {}) or {})
+    headers.pop("content-length", None)
+    return StreamingResponse(stream(), media_type=upstream.media_type, headers=headers)
+
+
+# ---------------------------------------------------------------------------
 # Local CLI test mode
 # ---------------------------------------------------------------------------
 
 
-else:
+if not OPENWEBUI:
 
     def classify_with_bedrock(router: CategoryRouter, user_prompt: str) -> str:
         """Classify a prompt using AWS Bedrock (Nova Micro)."""
@@ -335,9 +334,3 @@ else:
 
     if __name__ == "__main__":
         main()
-
-
-# Manual test steps:
-# - Non-stream test and verify preface renders correctly (no Markdown heading).
-# - Stream test and verify preface chunk arrives first.
-# - Unknown category → error.

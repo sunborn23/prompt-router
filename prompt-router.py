@@ -3,7 +3,7 @@ title: Prompt Router Pipe
 author: sunborn23
 author_url: https://github.com/sunborn23
 repo_url: https://github.com/sunborn23/prompt-router
-version: 0.6
+version: 1.0
 """
 
 import json
@@ -156,7 +156,7 @@ if OPENWEBUI:
             )
             raw_label = self._parse_classifier_label(clf_response)
 
-            category = raw_label.strip().lower()
+            category = (raw_label or "").strip().lower()
             model_id = self.router.model_for(category)
 
             if self.valves.ROUTING_STATUS_ENABLED and __event_emitter__:
@@ -193,9 +193,31 @@ if OPENWEBUI:
             }
 
         def _parse_classifier_label(self, response: Any) -> str:
-            if not isinstance(response, dict):
-                response = json.loads(response.body)
-            return response["choices"][0]["message"]["content"]  # type: ignore[index]
+            # Robust, aber explicit: mehrere bekannte Antwortformen nacheinander prüfen.
+            data: Any = response
+            if not isinstance(data, dict):
+                try:
+                    if hasattr(response, "body"):
+                        data = json.loads(response.body)  # type: ignore[attr-defined]
+                    elif isinstance(response, str):
+                        data = json.loads(response)
+                except Exception:
+                    return ""
+            try:
+                return str(data["choices"][0]["message"]["content"]).strip()
+            except Exception:
+                pass
+            try:
+                return str(data["output"]["message"]["content"][0]["text"]).strip()
+            except Exception:
+                pass
+            try:
+                return str(data["message"]["content"]).strip()
+            except Exception:
+                pass
+            if isinstance(data, dict) and "content" in data:
+                return str(data["content"]).strip()
+            return ""
 
 
     def pipes() -> list[dict[str, object]]:
